@@ -1,0 +1,6 @@
+[Service]
+ExecStart=/root/mqtt-sensors/nvidia_gpu_power.py
+WorkingDirectory=/root/mqtt-sensors
+
+[Install]
+WantedBy=default.target

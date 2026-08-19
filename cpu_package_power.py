@@ -1,24 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -Bu
 """CPU package power → MQTT + Home Assistant discovery (RAPL/powercap)."""
+import time, glob, os, re
+from mqtt_common import (
+    get_hostname, get_mqtt_settings, make_device, make_power_discovery, create_client
+)
 
-import time, glob, os, json, socket, re
-import paho.mqtt.client as mqtt
-
-def load_dotenv(path=".env"):
-    if not os.path.isfile(path):
-        return
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
-
-load_dotenv()
-
-HOSTNAME = socket.gethostname().split(".")[0]
-DEVICE_ID = f"linux_host_{HOSTNAME}"
+HOSTNAME = get_hostname()
+DEVICE, DEVICE_ID = make_device(HOSTNAME)
 OBJECT = f"cpu_package_power_{HOSTNAME}"
 CLIENT_ID = f"cpu-power-{HOSTNAME}"
 
@@ -36,32 +24,13 @@ def get_cpu_model():
 
 CPU_MODEL = get_cpu_model()
 ENTITY_NAME = f"{CPU_MODEL} Package Power"
-
-HOST = os.getenv("MQTT_HOST", "localhost")
-PORT = int(os.getenv("MQTT_PORT", "1883"))
-USER = os.getenv("MQTT_USER") or None
-PASS = os.getenv("MQTT_PASS") or None
-PREFIX = os.getenv("MQTT_PREFIX", "homeassistant")
-
+settings = get_mqtt_settings()
+PREFIX = settings["prefix"]
 STATE_T = f"{PREFIX}/sensor/{OBJECT}/state"
 CONFIG_T = f"{PREFIX}/sensor/{OBJECT}/config"
 AVAIL_T = f"{PREFIX}/sensor/{OBJECT}/availability"
 
-DISCOVERY = {
-    "name": ENTITY_NAME,
-    "state_topic": STATE_T,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "unit_of_measurement": "W",
-    "device_class": "power",
-    "state_class": "measurement",
-    "unique_id": OBJECT,
-    "device": {
-        "identifiers": [DEVICE_ID],
-        "name": HOSTNAME,
-    },
-}
+DISCOVERY = make_power_discovery(ENTITY_NAME, STATE_T, AVAIL_T, OBJECT, DEVICE)
 
 def find_pkg_energy():
     for d in glob.glob("/sys/class/powercap/intel-rapl:*"):
@@ -74,15 +43,12 @@ def find_pkg_energy():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_T, json.dumps(DISCOVERY), retain=True)
+        client.publish(CONFIG_T, __import__("json").dumps(DISCOVERY), retain=True)
         client.publish(AVAIL_T, "online", retain=True)
 
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=CLIENT_ID)
-if USER:
-    client.username_pw_set(USER, PASS)
-client.will_set(AVAIL_T, "offline", qos=1, retain=True)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
-client.connect(HOST, PORT, keepalive=60)
+client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
 f = find_pkg_energy()

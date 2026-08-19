@@ -1,5 +1,5 @@
 [Service]
-ExecStart=/root/mqtt-sensors/cpu_power.py
+ExecStart=/root/mqtt-sensors/cpu_package_power.py
 WorkingDirectory=/root/mqtt-sensors
 
 [Install]
