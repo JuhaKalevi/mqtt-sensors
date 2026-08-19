@@ -31,19 +31,32 @@ def make_device(hostname):
     device_id = f"linux_host_{hostname}"
     return {"identifiers": [device_id], "name": hostname}, device_id
 
-def make_power_discovery(name, state_topic, availability_topic, unique_id, device):
+def make_sensor_discovery(name, state_topic, availability_topic, unique_id, device,
+                          unit, device_class, state_class):
     return {
         "name": name,
         "state_topic": state_topic,
         "availability_topic": availability_topic,
         "payload_available": "online",
         "payload_not_available": "offline",
-        "unit_of_measurement": "W",
-        "device_class": "power",
-        "state_class": "measurement",
+        "unit_of_measurement": unit,
+        "device_class": device_class,
+        "state_class": state_class,
         "unique_id": unique_id,
         "device": device,
     }
+
+def make_power_discovery(name, state_topic, availability_topic, unique_id, device):
+    return make_sensor_discovery(
+        name, state_topic, availability_topic, unique_id, device,
+        unit="W", device_class="power", state_class="measurement"
+    )
+
+def make_energy_discovery(name, state_topic, availability_topic, unique_id, device):
+    return make_sensor_discovery(
+        name, state_topic, availability_topic, unique_id, device,
+        unit="kWh", device_class="energy", state_class="total_increasing"
+    )
 
 def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
