@@ -1,23 +1,49 @@
 #!/usr/bin/env python3
-"""CPU package power → MQTT + Home Assistant discovery (RAPL/powercap)."""
+"""CPU package power → MQTT + Home Assistant discovery (RAPL/powercap).
 
-import time, glob, os, json
+One device per machine (named after the host). Designed so additional
+entities (GPU power, etc.) can later join the same device.
+"""
+
+import time, glob, os, json, socket
 import paho.mqtt.client as mqtt
 
-# ── MQTT config (env vars, defaults are sensible) ──────────────────────────
-HOST     = os.getenv("MQTT_HOST", "localhost")
-PORT     = int(os.getenv("MQTT_PORT", "1883"))
-USER     = os.getenv("MQTT_USER") or None
-PASS     = os.getenv("MQTT_PASS") or None
-PREFIX   = os.getenv("MQTT_PREFIX", "homeassistant")   # discovery prefix
-OBJECT   = "cpu_package_power"                          # unique object_id
-NAME     = "CPU Package Power"
+def load_dotenv(path=".env"):
+    """Minimal .env loader (no extra dependency)."""
+    if not os.path.isfile(path):
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            os.environ.setdefault(key, val)
+
+load_dotenv()
+
+# ── identity ───────────────────────────────────────────────────────────────
+HOSTNAME   = socket.gethostname().split(".")[0]
+DEVICE_ID  = f"linux_host_{HOSTNAME}"          # stable device identifier
+OBJECT     = f"cpu_package_power_{HOSTNAME}"   # unique entity id
+CLIENT_ID  = f"cpu-power-{HOSTNAME}"           # unique MQTT client id
+ENTITY_NAME = "CPU Package Power"              # short, clean entity name
+
+# ── MQTT config (env / .env) ───────────────────────────────────────────────
+HOST   = os.getenv("MQTT_HOST", "localhost")
+PORT   = int(os.getenv("MQTT_PORT", "1883"))
+USER   = os.getenv("MQTT_USER") or None
+PASS   = os.getenv("MQTT_PASS") or None
+PREFIX = os.getenv("MQTT_PREFIX", "homeassistant")
+
 STATE_T  = f"{PREFIX}/sensor/{OBJECT}/state"
 CONFIG_T = f"{PREFIX}/sensor/{OBJECT}/config"
 AVAIL_T  = f"{PREFIX}/sensor/{OBJECT}/availability"
 
 DISCOVERY = {
-    "name": NAME,
+    "name": ENTITY_NAME,
     "state_topic": STATE_T,
     "availability_topic": AVAIL_T,
     "payload_available": "online",
@@ -27,9 +53,9 @@ DISCOVERY = {
     "state_class": "measurement",
     "unique_id": OBJECT,
     "device": {
-        "identifiers": ["linux_cpu_power"],
-        "name": "CPU Power",
-        "model": "RAPL",
+        "identifiers": [DEVICE_ID],
+        "name": HOSTNAME,                       # device = the computer
+        "model": "Linux host",
         "manufacturer": "Linux",
     },
 }
@@ -49,7 +75,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(AVAIL_T, "online", retain=True)
 
 # ── MQTT client ────────────────────────────────────────────────────────────
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="cpu-power")
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=CLIENT_ID)
 if USER:
     client.username_pw_set(USER, PASS)
 client.will_set(AVAIL_T, "offline", qos=1, retain=True)
