@@ -41,10 +41,17 @@ DISCOVERY_ENERGY = make_energy_discovery(
 )
 
 def find_pkg_energy():
+    """Return (energy_file, max_range_uj) for the package domain."""
     for d in glob.glob("/sys/class/powercap/intel-rapl:*"):
         try:
             if open(f"{d}/name").read().strip().startswith("package"):
-                return open(f"{d}/energy_uj")
+                energy_f = open(f"{d}/energy_uj")
+                try:
+                    max_range = int(open(f"{d}/max_energy_range_uj").read().strip())
+                except (OSError, ValueError):
+                    # Fallback only if the file is missing (very rare)
+                    max_range = 1 << 32
+                return energy_f, max_range
         except OSError:
             continue
     raise SystemExit("no package RAPL domain found")
@@ -60,7 +67,7 @@ client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
-f = find_pkg_energy()
+f, max_range = find_pkg_energy()
 prev = int(f.read())
 f.seek(0)
 energy_wh = 0.0
@@ -70,17 +77,17 @@ try:
     while True:
         time.sleep(1.0)
         t_now = time.monotonic()
-        dt = t_now - t_prev
+        dt = max(t_now - t_prev, 0.001)   # never divide by zero
         t_prev = t_now
 
         curr = int(f.read())
         f.seek(0)
-        delta = curr - prev
-        if delta < 0:
-            delta += 1 << 32
+
+        # Proper wrap-around using the hardware-reported range
+        delta = (curr - prev) % max_range
         prev = curr
 
-        power = (delta / 1e6) / dt          # exact watts from measured interval
+        power = (delta / 1e6) / dt         # µJ → J → W
         energy_wh += power * (dt / 3600.0)
 
         client.publish(STATE_POWER, f"{power:.1f}", retain=True)
