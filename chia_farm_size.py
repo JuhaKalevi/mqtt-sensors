@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Chia farm size → MQTT + Home Assistant discovery (farmer get_harvesters_summary)."""
-import time, json, ssl, urllib.request
+import time, json, ssl, http.client
 from pathlib import Path
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device,
@@ -47,20 +47,18 @@ DISCOVERY_EFF = make_sensor_discovery(
 CHIA_ROOT = Path.home() / ".chia" / "mainnet"
 CERT = CHIA_ROOT / "config" / "ssl" / "farmer" / "private_farmer.crt"
 KEY = CHIA_ROOT / "config" / "ssl" / "farmer" / "private_farmer.key"
-URL = "https://localhost:8559/get_harvesters_summary"
 TIB = 1024 ** 4
 
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.check_hostname = False
 ctx.verify_mode = ssl.CERT_NONE
 ctx.load_cert_chain(certfile=str(CERT), keyfile=str(KEY))
+conn = http.client.HTTPSConnection("localhost", 8559, context=ctx, timeout=15)
+conn.connect()
 
 def farm_stats():
-    req = urllib.request.Request(
-        URL, data=b"{}", headers={"Content-Type": "application/json"}, method="POST"
-    )
-    with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
-        data = json.load(resp)
+    conn.request("POST", "/get_harvesters_summary", body=b"{}", headers={"Content-Type": "application/json"})
+    data = json.loads(conn.getresponse().read())
     plots = size = effective = 0
     for h in data["harvesters"]:
         plots += int(h.get("plots") or 0)
@@ -93,3 +91,4 @@ finally:
     client.publish(AVAIL_T, "offline", retain=True)
     client.loop_stop()
     client.disconnect()
+    conn.close()

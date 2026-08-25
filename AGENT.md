@@ -34,7 +34,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `mqtt_common.py` — dotenv, hostname, discovery, client + LWT
 - `cpu_package_power.py` — RAPL package, fd held open, wrap via `(curr - prev) % max_energy_range_uj`
 - `nvidia_gpu_power.py` — one `nvidia-smi --loop=1`, multi-GPU
-- `chia_farm_size.py` — farmer `get_harvesters_summary`, SSL context held, plots + TiB + effective TiB
+- `chia_farm_size.py` — one held HTTPS connection to farmer `get_harvesters_summary`, plots + TiB + effective TiB
 - `*.service` — path stubs
 - `.env` — gitignored
 - `screen.png` — example HA card
