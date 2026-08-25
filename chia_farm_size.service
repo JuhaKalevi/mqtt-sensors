@@ -1,0 +1,6 @@
+[Service]
+ExecStart=/root/mqtt-sensors/chia_farm_size.py
+WorkingDirectory=/root/mqtt-sensors
+
+[Install]
+WantedBy=default.target
