@@ -53,4 +53,4 @@ MQTT_PASS=
 MQTT_PREFIX=homeassistant
 ```
 
-Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). systemd stubs still say `/root/mqtt-sensors`.
+Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). CPU/GPU units stub `/root/mqtt-sensors`. Chia uses `%h/mqtt-sensors` (user home; it does not run as root).

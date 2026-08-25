@@ -15,7 +15,7 @@ Publish numbers to MQTT so Home Assistant can discover them. Not a framework, no
 5. ~1 s using `time.monotonic()` for `dt`. Retained state.
 6. Power: W, `make_power_discovery`, `%.1f`.
 7. Energy (if any): RAM only, `energy_wh += power * (dt / 3600.0)`, publish `energy_wh / 1000.0` as kWh `%.6f`, `make_energy_discovery` (`total_increasing`). It resets when the process starts. That is correct for HA. Do not write it to disk.
-8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Leave the path as a stub.
+8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Root collectors stub `/root/mqtt-sensors`. Chia uses `%h/mqtt-sensors` (farm user home). Do not add `User=` or other unit keys.
 
 Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`.
 
@@ -35,6 +35,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `cpu_package_power.py` — RAPL package, fd held open, wrap via `(curr - prev) % max_energy_range_uj`
 - `nvidia_gpu_power.py` — one `nvidia-smi --loop=1`, multi-GPU
 - `chia_farm_size.py` — one held HTTPS connection to farmer `get_harvesters_summary`, plots + TiB + effective TiB
-- `*.service` — path stubs
+- `chia_farm_size.service` — `%h/mqtt-sensors` (not root)
+- `*.service` — CPU/GPU path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
 - `screen.png` — HA device page (hostname device, CPU + Chia)
