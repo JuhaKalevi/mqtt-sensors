@@ -17,7 +17,7 @@ Because it all runs as root, spare no effort reducing supply-chain risk. Details
 5. ~1 s using `time.monotonic()` for `dt`. Retained state.
 6. Power: W, `make_power_discovery`, `%.1f`.
 7. Energy (if any): RAM only, `energy_wh += power * (dt / 3600.0)`, publish `energy_wh / 1000.0` as kWh `%.6f`, `make_energy_discovery` (`total_increasing`). It resets when the process starts. That is correct for HA. Do not write it to disk.
-8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Path stub `/root/mqtt-sensors`. All collectors run as root. Do not add `User=` / `Group=`. Chia paths: `Path(pwd.getpwuid(1000).pw_dir) / ".chia" / …` — never a username, never `/home/…`.
+8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Path stub `/root/mqtt-sensors`. All collectors run as root. Do not add `User=` / `Group=`. Chia paths: `chia_root()` from `mqtt_common` (`pwd.getpwuid(1000).pw_dir / ".chia" / "mainnet"`). Never a username, never `/home/…`, never `Path.home()`.
 
 Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute and harvester processing time are `s` / `duration`; publish full precision, set `suggested_display_precision` to 1 on that dict. Publish each sample; do not average. Do not publish fail or gpu flags; gaps in time are enough.
 
@@ -35,7 +35,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 
 ## Layout
 
-- `mqtt_common.py` — dotenv, hostname, discovery, client + LWT
+- `mqtt_common.py` — dotenv, hostname, discovery, client + LWT, `chia_root()` (uid 1000)
 - `cpu_package_power.py` — RAPL package, fd held open, wrap via `(curr - prev) % max_energy_range_uj`
 - `nvidia_gpu_power.py` — one `nvidia-smi --loop=1`, multi-GPU
 - `chia_farm_size.py` — held HTTPS to farmer `get_harvesters_summary` and full node `get_blockchain_state`; plots + TiB + effective TiB + netspace EiB + ETA seconds `(space/effective)*18.75`; certs under uid 1000 home

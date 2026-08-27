@@ -75,4 +75,4 @@ MQTT_PASS=
 MQTT_PREFIX=homeassistant
 ```
 
-Python 3 + distro `python3-paho-mqtt` (not pip). Working directory is the repo (dotenv is `.env` here). systemd stubs are `/root/mqtt-sensors`, run as root. Chia data is under uid 1000's home from `pwd.getpwuid(1000).pw_dir`, never a hardcoded username.
+Python 3 + distro `python3-paho-mqtt` (not pip). Working directory is the repo (dotenv is `.env` here). systemd stubs are `/root/mqtt-sensors`, run as root. Chia data is `chia_root()` → uid 1000's `.chia/mainnet`, never `Path.home()` and never a username.

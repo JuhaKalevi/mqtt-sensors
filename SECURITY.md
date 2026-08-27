@@ -16,7 +16,7 @@ If a sensor's logic depends on something that could be a supply-chain risk, and 
 
 Everything here is meant to run as root from `/root/mqtt-sensors`. If you would not want a sensor doing its job as root, it does not belong in this project. Do not add `User=` as a substitute for shrinking the dependency surface.
 
-Chia files live under uid 1000's home (`pwd.getpwuid(1000).pw_dir`). That is a path lookup, not a privilege drop.
+Chia files live under uid 1000's home via `chia_root()` (`pwd.getpwuid(1000).pw_dir`). That is a path lookup, not a privilege drop. Never `Path.home()` — as root that is `/root`.
 
 ## What this file is for
 
