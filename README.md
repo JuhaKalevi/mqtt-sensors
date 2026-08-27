@@ -1,69 +1,32 @@
 # mqtt-sensors
 
-Long-lived processes that publish host stats to MQTT with Home Assistant discovery. Absolute minimum. One process per collector, one source held open for the life of that process. Everything here runs as root. If you would not want a sensor doing its job as root, it does not belong in this project.
+Long-lived root processes that publish host stats to MQTT with Home Assistant discovery. One process per collector, one source held open. No framework, no `requirements.txt`, no pip.
 
-Because it all runs as root, supply-chain risk is treated as a first-class constraint. Spare no effort reducing it. See [SECURITY.md](SECURITY.md). No `requirements.txt`: only distro packages. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework — not necessarily immediately, but that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the machine beat a new package. `paho-mqtt` is the only third-party library and it still comes from the distro.
-
-Every collector on a host shares one HA device (`linux_host_<hostname>`), shown as the hostname. This is that device on `M710q`: RAPL package power/energy plus Chia farm plots, on-disk size, effective size, estimated netspace, and ETA to win.
+Every collector on a host shares one HA device named after the hostname (`linux_host_<hostname>`). Example on `M710q`:
 
 ![Home Assistant](screen.png)
 
+[SECURITY.md](SECURITY.md) is the supply-chain / root policy. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it.
+
 ## Collectors
 
-| script | source (held open) | objects |
+| collector | what HA shows | source (held open) |
 |---|---|---|
-| `cpu_package_power.py` | `/sys/class/powercap/intel-rapl:*/energy_uj` (first `package*`) | `cpu_package_power_<host>` + `_energy` |
-| `nvidia_gpu_power.py` | one `nvidia-smi --query-gpu=index,name,power.draw --loop=1` | `gpuN_power_<host>`, `gpuN_energy_<host>` per GPU |
-| `chia_farm_size.py` | held TLS to farmer `:8559` `get_harvesters_summary` and full node `:8555` `get_blockchain_state` | `chia_plots_<host>`, `chia_farm_size_<host>`, `chia_farm_effective_<host>`, `chia_netspace_<host>`, `chia_eta_<host>` |
-| `chia_recompute_server_processing_time.py` | one `journalctl -u chia_recompute_server -f -n 0 -o cat` | `chia_recompute_server_processing_time_<host>` |
-| `chia_harvester_processing_time.py` | held fd on `~/.chia/mainnet/log/debug.log` (reopen on inode change) | `chia_harvester_processing_time_<host>` |
+| `cpu_package_power.py` | package power (W) and energy (kWh, RAM only, resets on start) | RAPL `energy_uj` fd |
+| `nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` |
+| `chia_farm_size.py` | plots, on-disk TiB, effective TiB, estimated netspace EiB, ETA to win (s) | farmer `:8559` + full node `:8555` TLS |
+| `chia_recompute_server_processing_time.py` | recompute processing time (s, full precision, display 1 decimal) | `journalctl -u chia_recompute_server -f` |
+| `chia_harvester_processing_time.py` | harvester lookup time (s) from `Time: N s` on eligible-plots lines | uid 1000 `debug.log` fd, reopen on daily rotate |
 
-Topics under `$MQTT_PREFIX` (default `homeassistant`): `sensor/<object>/{config,state,availability}`. GPU availability is shared: `sensor/gpu_power_<host>/availability`. Chia farm: `sensor/chia_farm_<host>/availability`. Recompute: `sensor/chia_recompute_server_<host>/availability`. Harvester: `sensor/chia_harvester_<host>/availability`.
+Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm needs a local farmer and full node. Recompute needs `chia_recompute_server` in the journal. Harvester needs that log. Chia paths use `chia_root()` → uid 1000's `.chia/mainnet`, never `/root` and never a username.
 
-Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. Recompute and harvester publish full-precision seconds; HA displays 1 decimal via `suggested_display_precision`. Recompute work comes in 10 s bursts; times swinging from ~0.2 s to ~5 s is normal, do not average it away. Harvester time is the `Time: N s` on `plots were eligible for farming` lines; daily log rotate reopens the fd (no new process). GPU script is a no-op on machines without `nvidia-smi`. Chia farm needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs. Harvester needs uid 1000's `~/.chia/mainnet/log/debug.log`. Recompute reads the `chia_recompute_server` journal.
+Energy is `total_increasing` kWh integrated in RAM; HA expects it to start at 0. ETA is `(netspace / effective) * 18.75`. Recompute times arriving in 10 s bursts (0.2 s–5 s) are normal — do not average.
 
-## Naming
+Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`.
 
-unique_id, MQTT object, and files: `{source}_{metric}` (+ `_{hostname}` on unique_id / object)
+## Run
 
-- `source` is the program or collector (`cpu_package`, `gpu0`, `chia_farm`, `chia_recompute_server`, `chia_harvester`)
-- `metric` is what is measured (`power`, `energy`, `size`, `processing_time`, `plots`, `netspace`, `eta`)
-- script `{source}_{metric}.py`, unit `{source}_{metric}.service`
-- unique_id `{source}_{metric}_{hostname}`
-- `hostname` is always last on unique_id
-
-HA `name` is a readable title that includes the metric (`Chia Recompute Server Processing Time`, `Chia Farm Size`). Never drop the metric. unique_id stays snake_case; do not use the raw binary name as the HA name.
-
-Availability is collector-level, no metric: `sensor/{source}_{hostname}/availability`. Client id: `{source}-{hostname}`. Device is always `linux_host_{hostname}`.
-
-Publish full precision in state. If the UI should look coarser, set `suggested_display_precision` on that discovery dict only — do not round the payload.
-
-## Adding a sensor
-
-Copy an existing script. Do not add a framework.
-
-1. New script in the repo root. Import from `mqtt_common` only.
-2. `get_hostname()` + `make_device()` so unique_ids and the HA device include the host. Follow **Naming**: files `{source}_{metric}.py`, unique_id `{source}_{metric}_{hostname}`.
-3. Hold one source open: a sysfs fd, a log fd, one subprocess with a native loop (`nvidia-smi --loop=1`, `journalctl -f`), or one HTTP/TLS connection. Never spawn per sample. Reopening a rotated log fd once a day is allowed.
-4. Connect with LWT on an availability topic. On connect: retained discovery + `online`. On exit: `offline`.
-5. ~1 s cadence. Publish retained state. Power is `%.1f` W. If you also publish energy, integrate in RAM (`power * dt / 3600` → kWh) with `state_class=total_increasing`. HA expects that counter to start at 0 when the process starts; do not persist it.
-6. Optional `foo.service` stub: `ExecStart`, `WorkingDirectory`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Path is `/root/mqtt-sensors`. All collectors run as root. Nothing else.
-
-Reuse `make_power_discovery` / `make_energy_discovery`, or `make_sensor_discovery` for other units. Do not grow `mqtt_common.py` unless several sensors need the same helper.
-
-### Do not
-
-- Comments
-- Extra error handling, logging, retries, reconnect wrappers, fake data
-- CLI flags, extra config files, new dependencies, tests, types, Docker, CI
-- A Sensor base class
-- systemd `[Unit]` filler, hardening. `Restart=on-failure` / `RestartSec=10` is required.
-- Dropping root. If the work should not run as root, it is the wrong repo.
-- New packages or pulling logic through untrusted code. Prefer a few lines of stdlib over a dependency.
-
-Assume RAPL, `nvidia-smi`, the Chia farmer and full node, `debug.log`, `chia_recompute_server` in the journal, the broker, and `.env` work.
-
-## Config
+As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`.
 
 `.env` in the working directory, or the environment:
 
@@ -75,4 +38,4 @@ MQTT_PASS=
 MQTT_PREFIX=homeassistant
 ```
 
-Python 3 + distro `python3-paho-mqtt` (not pip). Working directory is the repo (dotenv is `.env` here). systemd stubs are `/root/mqtt-sensors`, run as root. Chia data is `chia_root()` → uid 1000's `.chia/mainnet`, never `Path.home()` and never a username.
+Matching `*.service` stubs: `ExecStart`, `WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Enable the ones you want as system units.

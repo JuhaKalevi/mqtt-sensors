@@ -1,6 +1,6 @@
 # AGENT.md
 
-This repo is the absolute minimum needed to get host stats onto an MQTT broker. Collectors today: RAPL CPU package, NVIDIA GPU, Chia farm size, Chia recompute time, Chia harvester time. They share one HA device per hostname. A new sensor is a small script that copies those. Keep it that small.
+For coding agents. Humans read [README.md](README.md). Security policy: [SECURITY.md](SECURITY.md). This file is the `AGENTS.md`-style contract for adding a sensor. Keep it that small.
 
 ## Intent
 
