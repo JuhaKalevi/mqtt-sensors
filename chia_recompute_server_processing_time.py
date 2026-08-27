@@ -22,6 +22,7 @@ DISCOVERY_TIME = make_sensor_discovery(
     "Chia Recompute Server Processing Time", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
     unit="s", device_class="duration", state_class="measurement"
 )
+DISCOVERY_TIME["suggested_display_precision"] = 1
 
 TOOK = re.compile(r"took ([\d.]+) ms")
 
@@ -48,7 +49,7 @@ try:
         m = TOOK.search(line)
         if not m:
             continue
-        client.publish(STATE_TIME, f"{float(m.group(1)) / 1000.0:.1f}", retain=True)
+        client.publish(STATE_TIME, format(float(m.group(1)) / 1000.0, ".15g"), retain=True)
 except KeyboardInterrupt:
     pass
 finally:

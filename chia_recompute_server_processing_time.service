@@ -1,5 +1,5 @@
 [Service]
-ExecStart=/root/mqtt-sensors/chia_recompute_server.py
+ExecStart=/root/mqtt-sensors/chia_recompute_server_processing_time.py
 WorkingDirectory=/root/mqtt-sensors
 
 [Install]
