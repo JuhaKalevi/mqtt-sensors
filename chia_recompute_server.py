@@ -12,36 +12,22 @@ CLIENT_ID = f"chia-recompute-server-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ_TIME = f"chia_recompute_server_time_{HOSTNAME}"
-OBJ_FAIL = f"chia_recompute_server_fail_{HOSTNAME}"
+OBJ_TIME = f"chia_recompute_server_processing_time_{HOSTNAME}"
 AVAIL_T = f"{PREFIX}/sensor/chia_recompute_server_{HOSTNAME}/availability"
 
 STATE_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/state"
-STATE_FAIL = f"{PREFIX}/sensor/{OBJ_FAIL}/state"
 CONFIG_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/config"
-CONFIG_FAIL = f"{PREFIX}/sensor/{OBJ_FAIL}/config"
 
 DISCOVERY_TIME = make_sensor_discovery(
-    "chia_recompute_server time", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
+    "Chia Recompute Server Processing Time", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
     unit="s", device_class="duration", state_class="measurement"
 )
-DISCOVERY_FAIL = {
-    "name": "chia_recompute_server fail",
-    "state_topic": STATE_FAIL,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "state_class": "measurement",
-    "unique_id": OBJ_FAIL,
-    "device": DEVICE,
-}
 
-TOOK = re.compile(r"took ([\d.]+) ms \(used_gpu = (\d+), is_fail = (\d+)\)")
+TOOK = re.compile(r"took ([\d.]+) ms")
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.publish(CONFIG_TIME, json.dumps(DISCOVERY_TIME), retain=True)
-        client.publish(CONFIG_FAIL, json.dumps(DISCOVERY_FAIL), retain=True)
         client.publish(AVAIL_T, "online", retain=True)
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
@@ -63,7 +49,6 @@ try:
         if not m:
             continue
         client.publish(STATE_TIME, f"{float(m.group(1)) / 1000.0:.1f}", retain=True)
-        client.publish(STATE_FAIL, str(int(m.group(3))), retain=True)
 except KeyboardInterrupt:
     pass
 finally:

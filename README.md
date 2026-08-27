@@ -13,21 +13,21 @@ Every collector on a host shares one HA device (`linux_host_<hostname>`), shown 
 | `cpu_package_power.py` | `/sys/class/powercap/intel-rapl:*/energy_uj` (first `package*`) | `cpu_package_power_<host>` + `_energy` |
 | `nvidia_gpu_power.py` | one `nvidia-smi --query-gpu=index,name,power.draw --loop=1` | `gpuN_power_<host>`, `gpuN_energy_<host>` per GPU |
 | `chia_farm_size.py` | held TLS to farmer `:8559` `get_harvesters_summary` and full node `:8555` `get_blockchain_state` | `chia_plots_<host>`, `chia_farm_size_<host>`, `chia_farm_effective_<host>`, `chia_netspace_<host>`, `chia_eta_<host>` |
-| `chia_recompute_server.py` | one `journalctl -u chia_recompute_server -f -n 0 -o cat` | `chia_recompute_server_time_<host>`, `chia_recompute_server_fail_<host>` |
+| `chia_recompute_server.py` | one `journalctl -u chia_recompute_server -f -n 0 -o cat` | `chia_recompute_server_processing_time_<host>` |
 
 Topics under `$MQTT_PREFIX` (default `homeassistant`): `sensor/<object>/{config,state,availability}`. GPU availability is shared: `sensor/gpu_power_<host>/availability`. Chia farm: `sensor/chia_farm_<host>/availability`. Recompute: `sensor/chia_recompute_server_<host>/availability`.
 
-Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. Recompute publishes each journal line as it arrives (time in s, 1 decimal; fail 0/1). Work comes in 10 s bursts; times swinging from ~0.2 s to ~5 s is normal, do not average it away. GPU script is a no-op on machines without `nvidia-smi`. Chia farm needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs for the user that runs it. Recompute runs as root and reads the `chia_recompute_server` journal.
+Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. Recompute publishes each journal line as processing time in s (1 decimal). Work comes in 10 s bursts; times swinging from ~0.2 s to ~5 s is normal, do not average it away. GPU script is a no-op on machines without `nvidia-smi`. Chia farm needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs for the user that runs it. Recompute runs as root and reads the `chia_recompute_server` journal.
 
 ## Naming
 
 unique_id and MQTT object: `{source}_{metric}_{hostname}`
 
 - `source` is the program or collector (`cpu_package`, `gpu0`, `chia_farm`, `chia_recompute_server`)
-- `metric` is what is measured (`power`, `energy`, `size`, `time`, `fail`, `plots`, `netspace`, `eta`)
+- `metric` is what is measured (`power`, `energy`, `size`, `processing_time`, `plots`, `netspace`, `eta`)
 - `hostname` is always last
 
-HA `name`: `{source} {metric}`. Use the program name when that is the source (`chia_recompute_server time`). Title-case is fine when the source is not a binary (`Chia Farm Size`). Never drop the metric.
+HA `name` is a readable title that includes the metric (`Chia Recompute Server Processing Time`, `Chia Farm Size`). Never drop the metric. unique_id stays snake_case; do not use the raw binary name as the HA name.
 
 Availability is collector-level, no metric: `sensor/{source}_{hostname}/availability`. Client id: `{source}-{hostname}`. Device is always `linux_host_{hostname}`.
 

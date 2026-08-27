@@ -9,7 +9,7 @@ Publish numbers to MQTT so Home Assistant can discover them. Not a framework, no
 ## Adding a sensor
 
 1. New script at repo root. Import `mqtt_common`. Do not add packages.
-2. `HOSTNAME = get_hostname()` and `DEVICE, _ = make_device(HOSTNAME)`. unique_id and object: `{source}_{metric}_{hostname}`. HA `name`: `{source} {metric}` (program name + metric, e.g. `chia_recompute_server time`). Never omit the metric. Availability: `sensor/{source}_{hostname}/availability`. Client id: `{source}-{hostname}`. Same HA device as the other collectors on that host.
+2. `HOSTNAME = get_hostname()` and `DEVICE, _ = make_device(HOSTNAME)`. unique_id and object: `{source}_{metric}_{hostname}`. HA `name` is a readable title that includes the metric (`Chia Recompute Server Processing Time`). Never omit the metric. Never use the raw binary name as the HA name. Availability: `sensor/{source}_{hostname}/availability`. Client id: `{source}-{hostname}`. Same HA device as the other collectors on that host.
 3. One held-open source for the life of the process: sysfs fd, one subprocess that loops internally (`nvidia-smi --loop=1`, `journalctl -f`), or one HTTP/TLS connection. **Never** `Popen` per sample. **Never** open a new TCP connection per sample if you can hold one.
 4. `create_client(..., will_topic=availability)` then `loop_start()`. On connect: retained discovery JSON + `online`. On exit: `offline`, stop, disconnect.
 5. ~1 s using `time.monotonic()` for `dt`. Retained state.
@@ -17,7 +17,7 @@ Publish numbers to MQTT so Home Assistant can discover them. Not a framework, no
 7. Energy (if any): RAM only, `energy_wh += power * (dt / 3600.0)`, publish `energy_wh / 1000.0` as kWh `%.6f`, `make_energy_discovery` (`total_increasing`). It resets when the process starts. That is correct for HA. Do not write it to disk.
 8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Root collectors stub `/root/mqtt-sensors` (CPU, GPU, recompute). Chia farm uses `%h/mqtt-sensors` (farm user home). Do not add `User=` or other unit keys.
 
-Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute time is `s` / `duration` at 1 decimal (`ms/1000`); fail is 0/1 with no device_class. Publish each journal line; do not average over the 10 s burst.
+Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute processing time is `s` / `duration` at 1 decimal (`ms/1000`). Publish each journal line; do not average over the 10 s burst. Do not publish fail or gpu flags; gaps in time are enough.
 
 ## Hard rules
 
@@ -36,7 +36,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `nvidia_gpu_power.py` — one `nvidia-smi --loop=1`, multi-GPU
 - `chia_farm_size.py` — held HTTPS to farmer `get_harvesters_summary` and full node `get_blockchain_state`; plots + TiB + effective TiB + netspace EiB + ETA seconds `(space/effective)*18.75`
 - `chia_farm_size.service` — `%h/mqtt-sensors` (not root)
-- `chia_recompute_server.py` — one `journalctl -u chia_recompute_server -f`, each line → time s (1 decimal) + fail 0/1, no averaging
+- `chia_recompute_server.py` — one `journalctl -u chia_recompute_server -f`, each line → processing time s (1 decimal), no averaging
 - `chia_recompute_server.service` — `/root/mqtt-sensors`
 - `*.service` — CPU/GPU path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
