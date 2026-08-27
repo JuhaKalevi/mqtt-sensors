@@ -12,7 +12,7 @@ CLIENT_ID = f"chia-recompute-server-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ_TIME = f"chia_recompute_server_{HOSTNAME}"
+OBJ_TIME = f"chia_recompute_server_time_{HOSTNAME}"
 OBJ_FAIL = f"chia_recompute_server_fail_{HOSTNAME}"
 AVAIL_T = f"{PREFIX}/sensor/chia_recompute_server_{HOSTNAME}/availability"
 
@@ -22,7 +22,7 @@ CONFIG_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/config"
 CONFIG_FAIL = f"{PREFIX}/sensor/{OBJ_FAIL}/config"
 
 DISCOVERY_TIME = make_sensor_discovery(
-    "chia_recompute_server", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
+    "chia_recompute_server time", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
     unit="s", device_class="duration", state_class="measurement"
 )
 DISCOVERY_FAIL = {

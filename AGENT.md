@@ -9,7 +9,7 @@ Publish numbers to MQTT so Home Assistant can discover them. Not a framework, no
 ## Adding a sensor
 
 1. New script at repo root. Import `mqtt_common`. Do not add packages.
-2. `HOSTNAME = get_hostname()` and `DEVICE, _ = make_device(HOSTNAME)`. Put the hostname in every unique_id and client_id. Same HA device as the other collectors on that host.
+2. `HOSTNAME = get_hostname()` and `DEVICE, _ = make_device(HOSTNAME)`. unique_id and object: `{source}_{metric}_{hostname}`. HA `name`: `{source} {metric}` (program name + metric, e.g. `chia_recompute_server time`). Never omit the metric. Availability: `sensor/{source}_{hostname}/availability`. Client id: `{source}-{hostname}`. Same HA device as the other collectors on that host.
 3. One held-open source for the life of the process: sysfs fd, one subprocess that loops internally (`nvidia-smi --loop=1`, `journalctl -f`), or one HTTP/TLS connection. **Never** `Popen` per sample. **Never** open a new TCP connection per sample if you can hold one.
 4. `create_client(..., will_topic=availability)` then `loop_start()`. On connect: retained discovery JSON + `online`. On exit: `offline`, stop, disconnect.
 5. ~1 s using `time.monotonic()` for `dt`. Retained state.
