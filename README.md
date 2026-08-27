@@ -2,7 +2,7 @@
 
 Long-lived processes that publish host stats to MQTT with Home Assistant discovery. Absolute minimum. One process per collector, one source held open for the life of that process. Everything here runs as root. If you would not want a sensor doing its job as root, it does not belong in this project.
 
-Because it all runs as root, supply-chain risk is treated as a first-class constraint. Spare no effort reducing it. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework — not necessarily immediately, but that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the machine beat a new package. `paho-mqtt` is the only third-party dependency.
+Because it all runs as root, supply-chain risk is treated as a first-class constraint. Spare no effort reducing it. See [SECURITY.md](SECURITY.md). No `requirements.txt`: only distro packages. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework — not necessarily immediately, but that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the machine beat a new package. `paho-mqtt` is the only third-party library and it still comes from the distro.
 
 Every collector on a host shares one HA device (`linux_host_<hostname>`), shown as the hostname. This is that device on `M710q`: RAPL package power/energy plus Chia farm plots, on-disk size, effective size, estimated netspace, and ETA to win.
 
@@ -75,4 +75,4 @@ MQTT_PASS=
 MQTT_PREFIX=homeassistant
 ```
 
-Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). systemd stubs are `/root/mqtt-sensors`, run as root. Chia data is under uid 1000's home from `pwd.getpwuid(1000).pw_dir`, never a hardcoded username.
+Python 3 + distro `python3-paho-mqtt` (not pip). Working directory is the repo (dotenv is `.env` here). systemd stubs are `/root/mqtt-sensors`, run as root. Chia data is under uid 1000's home from `pwd.getpwuid(1000).pw_dir`, never a hardcoded username.

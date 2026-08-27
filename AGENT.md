@@ -6,7 +6,7 @@ This repo is the absolute minimum needed to get host stats onto an MQTT broker. 
 
 Publish numbers to MQTT so Home Assistant can discover them. Not a framework, not a metrics stack, not a supervisor. Everything here is meant to run as root. If it seems you would not want to be doing what a sensor is doing as root, it probably does not belong in this project.
 
-Because it all runs as root, spare no effort reducing supply-chain risk. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework. Not necessarily right away — that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the host beat a new package. Do not add dependencies. `paho-mqtt` is the exception that already exists.
+Because it all runs as root, spare no effort reducing supply-chain risk. Details: `SECURITY.md`. No `requirements.txt`, no pip, no PyPI. Only packages on the distro's standard list. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework. Not necessarily right away — that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the host beat a new package. Do not add dependencies. `paho-mqtt` is the exception that already exists and it arrives via the distro (`python3-paho-mqtt`).
 
 ## Adding a sensor
 
@@ -25,7 +25,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 
 - No comments.
 - Minimal error handling. Assume RAPL, `nvidia-smi`, the Chia farmer on localhost:8559, full node on localhost:8555, farmer + full_node certs and `debug.log` under uid 1000's `.chia/mainnet`, `journalctl -u chia_recompute_server`, the broker, and `.env` work.
-- No logging, retries, backoff, reconnect logic, tests, types, CLI flags, extra config, or dependencies beyond `paho-mqtt`.
+- No logging, retries, backoff, reconnect logic, tests, types, CLI flags, extra config, or dependencies beyond distro `python3-paho-mqtt`. Never add `requirements.txt`.
 - Do not add systemd hardening, `Restart=`, `[Unit]` keys, or healthchecks.
 - Do not drop root or add `User=`. If the work should not run as root, it is the wrong repo.
 - Treat supply-chain risk as a reason to rewrite a sensor in stdlib rather than to import one more thing. Existing sensors need not be rewritten on sight.
@@ -46,4 +46,5 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `chia_harvester_processing_time.service` — `/root/mqtt-sensors`
 - `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
+- `SECURITY.md` — root + supply-chain rules, distro packages only
 - `screen.png` — HA device page (hostname device, CPU + Chia)
