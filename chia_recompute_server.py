@@ -8,13 +8,13 @@ from mqtt_common import (
 
 HOSTNAME = get_hostname()
 DEVICE, DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"chia-recompute-{HOSTNAME}"
+CLIENT_ID = f"chia-recompute-server-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ_TIME = f"chia_recompute_time_{HOSTNAME}"
-OBJ_FAIL = f"chia_recompute_fail_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/chia_recompute_{HOSTNAME}/availability"
+OBJ_TIME = f"chia_recompute_server_{HOSTNAME}"
+OBJ_FAIL = f"chia_recompute_server_fail_{HOSTNAME}"
+AVAIL_T = f"{PREFIX}/sensor/chia_recompute_server_{HOSTNAME}/availability"
 
 STATE_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/state"
 STATE_FAIL = f"{PREFIX}/sensor/{OBJ_FAIL}/state"
@@ -22,11 +22,11 @@ CONFIG_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/config"
 CONFIG_FAIL = f"{PREFIX}/sensor/{OBJ_FAIL}/config"
 
 DISCOVERY_TIME = make_sensor_discovery(
-    "Chia Recompute Time", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
-    unit="ms", device_class="duration", state_class="measurement"
+    "chia_recompute_server", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
+    unit="s", device_class="duration", state_class="measurement"
 )
 DISCOVERY_FAIL = {
-    "name": "Chia Recompute Fail",
+    "name": "chia_recompute_server fail",
     "state_topic": STATE_FAIL,
     "availability_topic": AVAIL_T,
     "payload_available": "online",
@@ -62,7 +62,7 @@ try:
         m = TOOK.search(line)
         if not m:
             continue
-        client.publish(STATE_TIME, f"{float(m.group(1)):.2f}", retain=True)
+        client.publish(STATE_TIME, f"{float(m.group(1)) / 1000.0:.1f}", retain=True)
         client.publish(STATE_FAIL, str(int(m.group(3))), retain=True)
 except KeyboardInterrupt:
     pass
