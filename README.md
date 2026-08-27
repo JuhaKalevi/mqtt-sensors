@@ -13,10 +13,11 @@ Every collector on a host shares one HA device (`linux_host_<hostname>`), shown 
 | `cpu_package_power.py` | `/sys/class/powercap/intel-rapl:*/energy_uj` (first `package*`) | `cpu_package_power_<host>` + `_energy` |
 | `nvidia_gpu_power.py` | one `nvidia-smi --query-gpu=index,name,power.draw --loop=1` | `gpuN_power_<host>`, `gpuN_energy_<host>` per GPU |
 | `chia_farm_size.py` | held TLS to farmer `:8559` `get_harvesters_summary` and full node `:8555` `get_blockchain_state` | `chia_plots_<host>`, `chia_farm_size_<host>`, `chia_farm_effective_<host>`, `chia_netspace_<host>`, `chia_eta_<host>` |
+| `chia_recompute.py` | one `journalctl -u chia_recompute_server -f -n 0 -o cat` | `chia_recompute_time_<host>`, `chia_recompute_fail_<host>` |
 
-Topics under `$MQTT_PREFIX` (default `homeassistant`): `sensor/<object>/{config,state,availability}`. GPU availability is shared: `sensor/gpu_power_<host>/availability`. Chia: `sensor/chia_farm_<host>/availability`.
+Topics under `$MQTT_PREFIX` (default `homeassistant`): `sensor/<object>/{config,state,availability}`. GPU availability is shared: `sensor/gpu_power_<host>/availability`. Chia farm: `sensor/chia_farm_<host>/availability`. Recompute: `sensor/chia_recompute_<host>/availability`.
 
-Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. GPU script is a no-op on machines without `nvidia-smi`. Chia needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs for the user that runs it.
+Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. Recompute publishes each journal line as it arrives (time in ms, fail 0/1). Work comes in 10 s bursts; times swinging from ~200 ms to ~5 s is normal, do not average it away. GPU script is a no-op on machines without `nvidia-smi`. Chia farm needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs for the user that runs it. Recompute runs as root and reads the `chia_recompute_server` journal.
 
 ## Adding a sensor
 
@@ -24,7 +25,7 @@ Copy an existing script. Do not add a framework.
 
 1. New script in the repo root. Import from `mqtt_common` only.
 2. `get_hostname()` + `make_device()` so unique_ids and the HA device include the host.
-3. Hold one source open: a sysfs fd, one subprocess with a native loop (`nvidia-smi --loop=1`), or one HTTP/TLS connection. Never spawn per sample.
+3. Hold one source open: a sysfs fd, one subprocess with a native loop (`nvidia-smi --loop=1`, `journalctl -f`), or one HTTP/TLS connection. Never spawn per sample.
 4. Connect with LWT on an availability topic. On connect: retained discovery + `online`. On exit: `offline`.
 5. ~1 s cadence. Publish retained state. Power is `%.1f` W. If you also publish energy, integrate in RAM (`power * dt / 3600` → kWh) with `state_class=total_increasing`. HA expects that counter to start at 0 when the process starts; do not persist it.
 6. Optional `foo.service` stub: `ExecStart`, `WorkingDirectory`, `WantedBy=default.target`. Edit the path on the host. Nothing else.
@@ -39,7 +40,7 @@ Reuse `make_power_discovery` / `make_energy_discovery`, or `make_sensor_discover
 - A Sensor base class
 - systemd `Restart=`, `[Unit]` filler, hardening
 
-Assume RAPL, `nvidia-smi`, the Chia farmer and full node, the broker, and `.env` work.
+Assume RAPL, `nvidia-smi`, the Chia farmer and full node, `chia_recompute_server` in the journal, the broker, and `.env` work.
 
 ## Config
 
@@ -53,4 +54,4 @@ MQTT_PASS=
 MQTT_PREFIX=homeassistant
 ```
 
-Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). CPU/GPU units stub `/root/mqtt-sensors`. Chia uses `%h/mqtt-sensors` (user home; it does not run as root).
+Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). CPU/GPU/recompute units stub `/root/mqtt-sensors`. Chia farm uses `%h/mqtt-sensors` (user home; it does not run as root).
