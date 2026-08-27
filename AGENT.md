@@ -4,7 +4,7 @@ This repo is the absolute minimum needed to get host stats onto an MQTT broker. 
 
 ## Intent
 
-Publish numbers to MQTT so Home Assistant can discover them. Not a framework, not a metrics stack, not a supervisor.
+Publish numbers to MQTT so Home Assistant can discover them. Not a framework, not a metrics stack, not a supervisor. Everything here is meant to run as root. If it seems you would not want to be doing what a sensor is doing as root, it probably does not belong in this project.
 
 ## Adding a sensor
 
@@ -25,6 +25,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - Minimal error handling. Assume RAPL, `nvidia-smi`, the Chia farmer on localhost:8559, full node on localhost:8555, farmer + full_node certs and `debug.log` under uid 1000's `.chia/mainnet`, `journalctl -u chia_recompute_server`, the broker, and `.env` work.
 - No logging, retries, backoff, reconnect logic, tests, types, CLI flags, extra config, or dependencies beyond `paho-mqtt`.
 - Do not add systemd hardening, `Restart=`, `[Unit]` keys, or healthchecks.
+- Do not drop root or add `User=`. If the work should not run as root, it is the wrong repo.
 - Do not persist energy, add `last_reset`, MQTT TLS, or HA extras unless asked.
 - Do not introduce a Sensor class. Similar scripts beat an abstraction.
 - Leave existing comments and defensive parsing in the current scripts. Do not clean them up and do not copy them into new ones.
