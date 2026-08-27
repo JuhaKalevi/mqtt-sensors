@@ -2,6 +2,8 @@
 
 Long-lived processes that publish host stats to MQTT with Home Assistant discovery. Absolute minimum. One process per collector, one source held open for the life of that process. Everything here runs as root. If you would not want a sensor doing its job as root, it does not belong in this project.
 
+Because it all runs as root, supply-chain risk is treated as a first-class constraint. Spare no effort reducing it. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework — not necessarily immediately, but that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the machine beat a new package. `paho-mqtt` is the only third-party dependency.
+
 Every collector on a host shares one HA device (`linux_host_<hostname>`), shown as the hostname. This is that device on `M710q`: RAPL package power/energy plus Chia farm plots, on-disk size, effective size, estimated netspace, and ETA to win.
 
 ![Home Assistant](screen.png)
@@ -57,6 +59,7 @@ Reuse `make_power_discovery` / `make_energy_discovery`, or `make_sensor_discover
 - A Sensor base class
 - systemd `Restart=`, `[Unit]` filler, hardening
 - Dropping root. If the work should not run as root, it is the wrong repo.
+- New packages or pulling logic through untrusted code. Prefer a few lines of stdlib over a dependency.
 
 Assume RAPL, `nvidia-smi`, the Chia farmer and full node, `debug.log`, `chia_recompute_server` in the journal, the broker, and `.env` work.
 

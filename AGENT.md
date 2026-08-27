@@ -6,6 +6,8 @@ This repo is the absolute minimum needed to get host stats onto an MQTT broker. 
 
 Publish numbers to MQTT so Home Assistant can discover them. Not a framework, not a metrics stack, not a supervisor. Everything here is meant to run as root. If it seems you would not want to be doing what a sensor is doing as root, it probably does not belong in this project.
 
+Because it all runs as root, spare no effort reducing supply-chain risk. If a sensor's logic depends on something that could be a supply-chain risk, and a small custom solution would be safer, consider that rework. Not necessarily right away — that is the spirit. Stdlib, a sysfs fd, a local log, or a binary already on the host beat a new package. Do not add dependencies. `paho-mqtt` is the exception that already exists.
+
 ## Adding a sensor
 
 1. New script at repo root. Import `mqtt_common`. Do not add packages.
@@ -26,6 +28,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - No logging, retries, backoff, reconnect logic, tests, types, CLI flags, extra config, or dependencies beyond `paho-mqtt`.
 - Do not add systemd hardening, `Restart=`, `[Unit]` keys, or healthchecks.
 - Do not drop root or add `User=`. If the work should not run as root, it is the wrong repo.
+- Treat supply-chain risk as a reason to rewrite a sensor in stdlib rather than to import one more thing. Existing sensors need not be rewritten on sight.
 - Do not persist energy, add `last_reset`, MQTT TLS, or HA extras unless asked.
 - Do not introduce a Sensor class. Similar scripts beat an abstraction.
 - Leave existing comments and defensive parsing in the current scripts. Do not clean them up and do not copy them into new ones.
