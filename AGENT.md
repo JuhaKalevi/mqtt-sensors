@@ -17,7 +17,7 @@ Because it all runs as root, spare no effort reducing supply-chain risk. Details
 5. ~1 s using `time.monotonic()` for `dt`. Retained state.
 6. Power: W, `make_power_discovery`, `%.1f`.
 7. Energy (if any): RAM only, `energy_wh += power * (dt / 3600.0)`, publish `energy_wh / 1000.0` as kWh `%.6f`, `make_energy_discovery` (`total_increasing`). It resets when the process starts. That is correct for HA. Do not write it to disk.
-8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Path stub `/root/mqtt-sensors`. All collectors run as root. Do not add `User=` / `Group=`. Chia paths: `chia_root()` from `mqtt_common` (`pwd.getpwuid(1000).pw_dir / ".chia" / "mainnet"`). Never a username, never `/home/…`, never `Path.home()`.
+8. Optional matching `*.service`: `ExecStart`, `WorkingDirectory`, `Restart=on-failure`, `RestartSec=10`, `[Install] WantedBy=default.target`. Path stub `/root/mqtt-sensors`. All collectors run as root. Do not add `User=` / `Group=`. Chia paths: `chia_root()` from `mqtt_common` (`pwd.getpwuid(1000).pw_dir / ".chia" / "mainnet"`). Never a username, never `/home/…`, never `Path.home()`.
 
 Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute and harvester processing time are `s` / `duration`; publish full precision, set `suggested_display_precision` to 1 on that dict. Publish each sample; do not average. Do not publish fail or gpu flags; gaps in time are enough.
 
@@ -26,7 +26,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - No comments.
 - Minimal error handling. Assume RAPL, `nvidia-smi`, the Chia farmer on localhost:8559, full node on localhost:8555, farmer + full_node certs and `debug.log` under uid 1000's `.chia/mainnet`, `journalctl -u chia_recompute_server`, the broker, and `.env` work.
 - No logging, retries, backoff, reconnect logic, tests, types, CLI flags, extra config, or dependencies beyond distro `python3-paho-mqtt`. Never add `requirements.txt`.
-- Do not add systemd hardening, `Restart=`, `[Unit]` keys, or healthchecks.
+- Do not add systemd hardening, `[Unit]` keys, or healthchecks. Units do use `Restart=on-failure` and `RestartSec=10`.
 - Do not drop root or add `User=`. If the work should not run as root, it is the wrong repo.
 - Treat supply-chain risk as a reason to rewrite a sensor in stdlib rather than to import one more thing. Existing sensors need not be rewritten on sight.
 - Do not persist energy, add `last_reset`, MQTT TLS, or HA extras unless asked.

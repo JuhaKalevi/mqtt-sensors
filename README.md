@@ -47,7 +47,7 @@ Copy an existing script. Do not add a framework.
 3. Hold one source open: a sysfs fd, a log fd, one subprocess with a native loop (`nvidia-smi --loop=1`, `journalctl -f`), or one HTTP/TLS connection. Never spawn per sample. Reopening a rotated log fd once a day is allowed.
 4. Connect with LWT on an availability topic. On connect: retained discovery + `online`. On exit: `offline`.
 5. ~1 s cadence. Publish retained state. Power is `%.1f` W. If you also publish energy, integrate in RAM (`power * dt / 3600` → kWh) with `state_class=total_increasing`. HA expects that counter to start at 0 when the process starts; do not persist it.
-6. Optional `foo.service` stub: `ExecStart`, `WorkingDirectory`, `WantedBy=default.target`. Path is `/root/mqtt-sensors`. All collectors run as root. Nothing else.
+6. Optional `foo.service` stub: `ExecStart`, `WorkingDirectory`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Path is `/root/mqtt-sensors`. All collectors run as root. Nothing else.
 
 Reuse `make_power_discovery` / `make_energy_discovery`, or `make_sensor_discovery` for other units. Do not grow `mqtt_common.py` unless several sensors need the same helper.
 
@@ -57,7 +57,7 @@ Reuse `make_power_discovery` / `make_energy_discovery`, or `make_sensor_discover
 - Extra error handling, logging, retries, reconnect wrappers, fake data
 - CLI flags, extra config files, new dependencies, tests, types, Docker, CI
 - A Sensor base class
-- systemd `Restart=`, `[Unit]` filler, hardening
+- systemd `[Unit]` filler, hardening. `Restart=on-failure` / `RestartSec=10` is required.
 - Dropping root. If the work should not run as root, it is the wrong repo.
 - New packages or pulling logic through untrusted code. Prefer a few lines of stdlib over a dependency.
 

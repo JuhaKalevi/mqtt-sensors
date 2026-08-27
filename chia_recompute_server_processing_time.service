@@ -1,6 +1,8 @@
 [Service]
 ExecStart=/root/mqtt-sensors/chia_recompute_server_processing_time.py
 WorkingDirectory=/root/mqtt-sensors
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=default.target
