@@ -1,7 +1,7 @@
 [Service]
 User=1000
 Group=1000
-ExecStart=%h/mqtt-sensors/chia_farm_size.py
+ExecStart=%h/mqtt-sensors/chia_harvester_processing_time.py
 WorkingDirectory=%h/mqtt-sensors
 
 [Install]
