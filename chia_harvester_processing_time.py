@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Chia harvester processing time → MQTT + Home Assistant discovery (debug.log)."""
-import json, os, re, time
+import json, os, re, time, pwd
 from pathlib import Path
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device,
@@ -25,7 +25,7 @@ DISCOVERY_TIME = make_sensor_discovery(
 DISCOVERY_TIME["suggested_display_precision"] = 1
 
 TOOK = re.compile(r"plots were eligible for farming .* Time: ([\d.]+) s")
-LOG = Path.home() / ".chia" / "mainnet" / "log" / "debug.log"
+LOG = Path(pwd.getpwuid(1000).pw_dir) / ".chia" / "mainnet" / "log" / "debug.log"
 
 def open_log(from_end):
     f = open(LOG)

@@ -18,7 +18,7 @@ Every collector on a host shares one HA device (`linux_host_<hostname>`), shown 
 
 Topics under `$MQTT_PREFIX` (default `homeassistant`): `sensor/<object>/{config,state,availability}`. GPU availability is shared: `sensor/gpu_power_<host>/availability`. Chia farm: `sensor/chia_farm_<host>/availability`. Recompute: `sensor/chia_recompute_server_<host>/availability`. Harvester: `sensor/chia_harvester_<host>/availability`.
 
-Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. Recompute and harvester publish full-precision seconds; HA displays 1 decimal via `suggested_display_precision`. Recompute work comes in 10 s bursts; times swinging from ~0.2 s to ~5 s is normal, do not average it away. Harvester time is the `Time: N s` on `plots were eligible for farming` lines; daily log rotate reopens the fd (no new process). GPU script is a no-op on machines without `nvidia-smi`. Chia farm needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs. Harvester needs `~/.chia/mainnet/log/debug.log`. Recompute runs as root and reads the `chia_recompute_server` journal.
+Power is W (`measurement`). Energy is kWh (`total_increasing`), integrated in RAM from 1 s samples, reset when the process starts. Chia sizes are TiB, netspace is EiB (`data_size`). Plots is a count. ETA to win is seconds (`duration`): `(netspace / effective) * 18.75`. Recompute and harvester publish full-precision seconds; HA displays 1 decimal via `suggested_display_precision`. Recompute work comes in 10 s bursts; times swinging from ~0.2 s to ~5 s is normal, do not average it away. Harvester time is the `Time: N s` on `plots were eligible for farming` lines; daily log rotate reopens the fd (no new process). GPU script is a no-op on machines without `nvidia-smi`. Chia farm needs the farmer, a local full node, and `~/.chia/mainnet` farmer + full_node certs. Harvester needs uid 1000's `~/.chia/mainnet/log/debug.log`. Recompute reads the `chia_recompute_server` journal.
 
 ## Naming
 
@@ -45,7 +45,7 @@ Copy an existing script. Do not add a framework.
 3. Hold one source open: a sysfs fd, a log fd, one subprocess with a native loop (`nvidia-smi --loop=1`, `journalctl -f`), or one HTTP/TLS connection. Never spawn per sample. Reopening a rotated log fd once a day is allowed.
 4. Connect with LWT on an availability topic. On connect: retained discovery + `online`. On exit: `offline`.
 5. ~1 s cadence. Publish retained state. Power is `%.1f` W. If you also publish energy, integrate in RAM (`power * dt / 3600` → kWh) with `state_class=total_increasing`. HA expects that counter to start at 0 when the process starts; do not persist it.
-6. Optional `foo.service` stub: `ExecStart`, `WorkingDirectory`, `WantedBy=default.target`. Chia farm/harvester units also set `User=1000` `Group=1000` (numeric UID/GID is valid). Root collectors stub `/root/mqtt-sensors`. Nothing else.
+6. Optional `foo.service` stub: `ExecStart`, `WorkingDirectory`, `WantedBy=default.target`. Path is `/root/mqtt-sensors`. All collectors run as root. Nothing else.
 
 Reuse `make_power_discovery` / `make_energy_discovery`, or `make_sensor_discovery` for other units. Do not grow `mqtt_common.py` unless several sensors need the same helper.
 
@@ -71,4 +71,4 @@ MQTT_PASS=
 MQTT_PREFIX=homeassistant
 ```
 
-Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). CPU/GPU/recompute units stub `/root/mqtt-sensors`. Chia farm and harvester use `%h/mqtt-sensors` with `User=1000` `Group=1000`.
+Python 3 + `paho-mqtt`. Working directory is the repo (dotenv is `.env` here). systemd stubs are `/root/mqtt-sensors`, run as root. Chia data is under uid 1000's home from `pwd.getpwuid(1000).pw_dir`, never a hardcoded username.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Chia farm size → MQTT + Home Assistant discovery (farmer + full node RPC)."""
-import time, json, ssl, http.client
+import time, json, ssl, http.client, pwd
 from pathlib import Path
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device,
@@ -58,7 +58,7 @@ DISCOVERY_ETA = make_sensor_discovery(
     unit="s", device_class="duration", state_class="measurement"
 )
 
-CHIA_ROOT = Path.home() / ".chia" / "mainnet"
+CHIA_ROOT = Path(pwd.getpwuid(1000).pw_dir) / ".chia" / "mainnet"
 TIB = 1024 ** 4
 EIB = 1024 ** 6
 BLOCK_S = 18.75

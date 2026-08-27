@@ -15,14 +15,14 @@ Publish numbers to MQTT so Home Assistant can discover them. Not a framework, no
 5. ~1 s using `time.monotonic()` for `dt`. Retained state.
 6. Power: W, `make_power_discovery`, `%.1f`.
 7. Energy (if any): RAM only, `energy_wh += power * (dt / 3600.0)`, publish `energy_wh / 1000.0` as kWh `%.6f`, `make_energy_discovery` (`total_increasing`). It resets when the process starts. That is correct for HA. Do not write it to disk.
-8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Root collectors stub `/root/mqtt-sensors` (CPU, GPU, recompute). Chia farm and harvester use `%h/mqtt-sensors` with `User=1000` `Group=1000` (numeric UID/GID is valid). No other unit keys.
+8. Optional matching `*.service`: only `ExecStart`, `WorkingDirectory`, `[Install] WantedBy=default.target`. Path stub `/root/mqtt-sensors`. All collectors run as root. Do not add `User=` / `Group=`. Chia paths: `Path(pwd.getpwuid(1000).pw_dir) / ".chia" / …` — never a username, never `/home/…`.
 
 Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute and harvester processing time are `s` / `duration`; publish full precision, set `suggested_display_precision` to 1 on that dict. Publish each sample; do not average. Do not publish fail or gpu flags; gaps in time are enough.
 
 ## Hard rules
 
 - No comments.
-- Minimal error handling. Assume RAPL, `nvidia-smi`, the Chia farmer on localhost:8559, full node on localhost:8555, farmer + full_node certs under `~/.chia/mainnet`, `~/.chia/mainnet/log/debug.log`, `journalctl -u chia_recompute_server`, the broker, and `.env` work.
+- Minimal error handling. Assume RAPL, `nvidia-smi`, the Chia farmer on localhost:8559, full node on localhost:8555, farmer + full_node certs and `debug.log` under uid 1000's `.chia/mainnet`, `journalctl -u chia_recompute_server`, the broker, and `.env` work.
 - No logging, retries, backoff, reconnect logic, tests, types, CLI flags, extra config, or dependencies beyond `paho-mqtt`.
 - Do not add systemd hardening, `Restart=`, `[Unit]` keys, or healthchecks.
 - Do not persist energy, add `last_reset`, MQTT TLS, or HA extras unless asked.
@@ -34,12 +34,12 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `mqtt_common.py` — dotenv, hostname, discovery, client + LWT
 - `cpu_package_power.py` — RAPL package, fd held open, wrap via `(curr - prev) % max_energy_range_uj`
 - `nvidia_gpu_power.py` — one `nvidia-smi --loop=1`, multi-GPU
-- `chia_farm_size.py` — held HTTPS to farmer `get_harvesters_summary` and full node `get_blockchain_state`; plots + TiB + effective TiB + netspace EiB + ETA seconds `(space/effective)*18.75`
-- `chia_farm_size.service` — `%h/mqtt-sensors`, `User=1000` `Group=1000`
+- `chia_farm_size.py` — held HTTPS to farmer `get_harvesters_summary` and full node `get_blockchain_state`; plots + TiB + effective TiB + netspace EiB + ETA seconds `(space/effective)*18.75`; certs under uid 1000 home
+- `chia_farm_size.service` — `/root/mqtt-sensors`
 - `chia_recompute_server_processing_time.py` — one `journalctl -u chia_recompute_server -f`, each line → full-precision seconds, display 1 decimal
 - `chia_recompute_server_processing_time.service` — `/root/mqtt-sensors`
-- `chia_harvester_processing_time.py` — held `debug.log` fd, `Time: N s` on eligible-plots lines, reopen on inode change
-- `chia_harvester_processing_time.service` — `%h/mqtt-sensors`, `User=1000` `Group=1000`
-- `*.service` — CPU/GPU path stubs under `/root/mqtt-sensors`
+- `chia_harvester_processing_time.py` — held `debug.log` fd under uid 1000 home, `Time: N s` on eligible-plots lines, reopen on inode change
+- `chia_harvester_processing_time.service` — `/root/mqtt-sensors`
+- `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
 - `screen.png` — HA device page (hostname device, CPU + Chia)
