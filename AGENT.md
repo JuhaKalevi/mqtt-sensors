@@ -44,7 +44,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `chia_recompute_server_processing_time.service` — `/root/mqtt-sensors`
 - `chia_harvester_processing_time.py` — held `debug.log` fd under uid 1000 home, `Time: N s` on eligible-plots lines, reopen on inode change
 - `chia_harvester_processing_time.service` — `/root/mqtt-sensors`
-- `loginctl_active_users.py` — `/run/systemd/users`, names with state `active`/`online`, comma-separated
+- `loginctl_active_users.py` — `/run/systemd/users`, names with state `active`/`online`, comma-separated; do not spawn `loginctl`. sshfs: skip `pam_systemd` for group `sshfs` (README).
 - `loginctl_active_users.service` — `/root/mqtt-sensors`
 - `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
