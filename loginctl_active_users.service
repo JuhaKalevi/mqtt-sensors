@@ -1,0 +1,8 @@
+[Service]
+ExecStart=/root/mqtt-sensors/loginctl_active_users.py
+WorkingDirectory=/root/mqtt-sensors
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
