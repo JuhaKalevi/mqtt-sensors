@@ -19,7 +19,7 @@ Because it all runs as root, spare no effort reducing supply-chain risk. Details
 7. Energy (if any): RAM only, `energy_wh += power * (dt / 3600.0)`, publish `energy_wh / 1000.0` as kWh `%.6f`, `make_energy_discovery` (`total_increasing`). It resets when the process starts. That is correct for HA. Do not write it to disk.
 8. Optional matching `*.service`: `ExecStart`, `WorkingDirectory`, `Restart=on-failure`, `RestartSec=10`, `[Install] WantedBy=default.target`. Path stub `/root/mqtt-sensors`. All collectors run as root. Do not add `User=` / `Group=`. Chia paths: `chia_root()` from `mqtt_common` (`pwd.getpwuid(1000).pw_dir / ".chia" / "mainnet"`). Never a username, never `/home/…`, never `Path.home()`.
 
-Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute and harvester processing time are `s` / `duration`; publish full precision, set `suggested_display_precision` to 1 on that dict. Publish each sample; do not average. Do not publish fail or gpu flags; gaps in time are enough. Loginctl active users is a string (comma-separated names); no unit, no device_class, no state_class. On/off services are MQTT `binary_sensor` (`device_class=running`, payloads `ON`/`OFF`); config under `binary_sensor/<object>/config`. LightDM active is the `lightdm.service` cgroup dir existing.
+Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_class / state_class. Do not extend `mqtt_common.py` for a one-off. Chia plots omit `device_class` (plain count). Chia sizes use `TiB` / `data_size`, netspace `EiB` / `data_size`, ETA `s` / `duration`. Recompute and harvester processing time are `s` / `duration`; publish full precision, set `suggested_display_precision` to 1 on that dict. One sensor per process, except `chia_harvester_processing_time.py`, which also publishes plot count from the same `debug.log` line. Publish each sample; do not average. Do not publish fail or gpu flags; gaps in time are enough. Loginctl active users is a string (comma-separated names); no unit, no device_class, no state_class. On/off services are MQTT `binary_sensor` (`device_class=running`, payloads `ON`/`OFF`); config under `binary_sensor/<object>/config`. LightDM active is the `lightdm.service` cgroup dir existing.
 
 ## Hard rules
 
@@ -42,7 +42,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `chia_farm_size.service` — `/root/mqtt-sensors`
 - `chia_recompute_server_processing_time.py` — one `journalctl -u chia_recompute_server -f`, each line → full-precision seconds, display 1 decimal
 - `chia_recompute_server_processing_time.service` — `/root/mqtt-sensors`
-- `chia_harvester_processing_time.py` — held `debug.log` fd under uid 1000 home, `Time: N s` on eligible-plots lines, reopen on inode change
+- `chia_harvester_processing_time.py` — held `debug.log` fd under uid 1000 home, eligible-plots lines → processing time (s) + plot count (`Total N plots` on the same line; allowed two-sensor exception), reopen on inode change
 - `chia_harvester_processing_time.service` — `/root/mqtt-sensors`
 - `loginctl_active_users.py` — `/run/systemd/users`, names with state `active`/`online`, comma-separated; do not spawn `loginctl`. sshfs: skip `pam_systemd` for group `sshfs` (README).
 - `loginctl_active_users.service` — `/root/mqtt-sensors`
