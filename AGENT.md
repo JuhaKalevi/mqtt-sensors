@@ -48,7 +48,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `loginctl_active_users.service` — `/root/mqtt-sensors`
 - `lightdm_active.py` — cgroup dir for `lightdm.service` → MQTT binary_sensor ON/OFF
 - `lightdm_active.service` — `/root/mqtt-sensors`
-- `power_supply_battery.py` — every `/sys/class/power_supply` node with `type=Battery` and `capacity`, held `capacity` fds; `scope=System` stays on the host HA device, anything else gets its own HA device with `via_device` (so a mouse battery does not become the host header badge)
+- `power_supply_battery.py` — every `/sys/class/power_supply` node with `type=Battery` and `capacity`; rescans the class dir each second (add/remove), holds `capacity` fds while present, clears MQTT discovery on remove; `scope=System` stays on the host HA device, anything else gets its own HA device with `via_device`
 - `power_supply_battery.service` — `/root/mqtt-sensors`
 - `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
