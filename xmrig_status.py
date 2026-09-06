@@ -89,7 +89,7 @@ def publish_stats(data):
     good = int(data["results"]["shares_good"])
     shares = int(data["results"]["shares_total"])
     rej = 0.0 if shares == 0 else (shares - good) * 100.0 / shares
-    client.publish(STATE_HR, format(float(hr), ".15g"), retain=True)
+    client.publish(STATE_HR, str(round(float(hr))), retain=True)
     client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
     client.publish(STATE_SW, "OFF" if data["paused"] else "ON", retain=True)
 
