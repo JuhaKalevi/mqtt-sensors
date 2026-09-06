@@ -1,6 +1,6 @@
 # AGENT.md
 
-For coding agents. Humans read [README.md](README.md). Security policy: [SECURITY.md](SECURITY.md). This file is the `AGENTS.md`-style contract for adding a sensor. Keep it that small.
+For coding agents. Humans read [README.md](README.md). Security policy: [SECURITY.md](SECURITY.md). Conduct (fail-fast): [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). This file is the `AGENTS.md`-style contract for adding a sensor. Keep it that small.
 
 ## Intent
 
@@ -60,5 +60,6 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
 - `SECURITY.md` — root + supply-chain rules, distro packages only
+- `CODE_OF_CONDUCT.md` — fail-fast, minimal surface, assume prerequisites; systemd restarts
 - `screen.png` — example HA device page (farmer host `M710q`)
 - `screen2.png` — example HA device page (miner host `B850Pro`, XMRig + profitability)

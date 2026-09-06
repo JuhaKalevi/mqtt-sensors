@@ -8,7 +8,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 
 ![Home Assistant — B850Pro](screen2.png)
 
-[SECURITY.md](SECURITY.md) is the supply-chain / root policy. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it.
+[SECURITY.md](SECURITY.md) is the supply-chain / root policy. [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is fail-fast / minimalism. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it.
 
 ## Collectors
 
