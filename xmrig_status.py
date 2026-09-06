@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """XMRig hashrate, reject ratio, mining switch, optional profitability factor → MQTT + HA."""
-import json, os, time, http.client
+import json, os, sys, time, http.client
 from urllib.parse import urlparse
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device, create_client
@@ -96,6 +96,7 @@ xmr_eur = None
 spot = SPOT_FIXED
 pf_discovered = False
 last_ha_spot = 0.0
+last_missing_print = 0.0
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -138,7 +139,10 @@ def refresh_ha_spot():
         headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
     )
     resp = ha_conn.getresponse()
-    data = json.loads(resp.read())
+    body = resp.read()
+    if resp.status != 200:
+        raise RuntimeError(f"HA {HA_SPOT_ENTITY} HTTP {resp.status}: {body[:200]!r}")
+    data = json.loads(body)
     spot = float(data["state"])
 
 def inputs_ready():
@@ -151,6 +155,30 @@ def inputs_ready():
         and power_w is not None
     )
 
+def missing_inputs(eff_hr, eff_power):
+    missing = []
+    if not PROFIT_WANTED:
+        missing.append("spot source (set HA_TOKEN, ELECTRICITY_EUR_PER_KWH_TOPIC, or ELECTRICITY_EUR_PER_KWH)")
+        return missing
+    if xmr_rate is None:
+        missing.append(f"mqtt {TOPIC_RATE}")
+    if xmr_eur is None:
+        missing.append(f"mqtt {TOPIC_EUR}")
+    if power_w is None:
+        missing.append(f"mqtt {TOPIC_POWER}")
+    if spot is None or spot <= 0:
+        if HA_SPOT:
+            missing.append(f"ha {HA_SPOT_ENTITY} via {HA_URL}")
+        elif SPOT_TOPIC:
+            missing.append(f"mqtt {SPOT_TOPIC}")
+        else:
+            missing.append("ELECTRICITY_EUR_PER_KWH")
+    if eff_hr <= 0:
+        missing.append("hashrate (live or last mining)")
+    if eff_power <= 0:
+        missing.append("package watts (live or last mining)")
+    return missing
+
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
         return None
@@ -159,7 +187,7 @@ def profitability(eff_hr, eff_power):
     return revenue / cost
 
 def publish_stats(data):
-    global last_hr, last_power, pf_discovered, last_ha_spot
+    global last_hr, last_power, pf_discovered, last_ha_spot, last_missing_print
     total = data["hashrate"]["total"]
     hr = float(total[1] if len(total) > 1 and total[1] is not None else (total[0] or 0))
     good = int(data["results"]["shares_good"])
@@ -173,22 +201,28 @@ def publish_stats(data):
         return
     now = time.monotonic()
     if HA_SPOT and now - last_ha_spot >= 60.0:
-        refresh_ha_spot()
+        try:
+            refresh_ha_spot()
+        except Exception as err:
+            print(f"xmrig_status: HA spot refresh failed: {err}", flush=True)
         last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
     if not paused and power_w is not None and power_w > 0:
         last_power = power_w
-    if not inputs_ready():
-        return
     eff_hr = hr if not paused and hr > 0 else last_hr
-    eff_power = power_w if not paused and power_w > 0 else last_power
+    eff_power = power_w if not paused and power_w is not None and power_w > 0 else last_power
     factor = profitability(eff_hr, eff_power)
     if factor is None:
+        missing = missing_inputs(eff_hr, eff_power)
+        if missing and now - last_missing_print >= 60.0:
+            print(f"xmrig_status: profitability waiting on: {', '.join(missing)}", flush=True)
+            last_missing_print = now
         return
     if not pf_discovered:
         client.publish(CONFIG_PF, json.dumps(DISCOVERY_PF), retain=True)
         pf_discovered = True
+        print(f"xmrig_status: profitability factor online (value {factor:.6g})", flush=True)
     client.publish(STATE_PF, format(factor, ".15g"), retain=True)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -226,6 +260,14 @@ def on_message(client, userdata, msg):
         xmr_eur = float(payload)
     elif SPOT_TOPIC and topic == SPOT_TOPIC:
         spot = float(payload)
+
+print(
+    f"xmrig_status: host={HOSTNAME} profit_wanted={PROFIT_WANTED} "
+    f"ha_spot={HA_SPOT} power_topic={TOPIC_POWER}",
+    flush=True,
+)
+if not PROFIT_WANTED:
+    print("xmrig_status: basic stats only (no HA_TOKEN / spot topic / fixed EUR per kWh)", flush=True)
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
