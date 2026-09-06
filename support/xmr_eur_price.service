@@ -1,0 +1,8 @@
+[Service]
+ExecStart=/root/mqtt-sensors/support/xmr_eur_price.py
+WorkingDirectory=/root/mqtt-sensors
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
