@@ -108,7 +108,11 @@ conn = http.client.HTTPConnection(XMRIG_HOST, XMRIG_PORT, timeout=5)
 conn.connect()
 
 ha_conn = None
-if HA_SPOT:
+
+def ensure_ha_conn():
+    global ha_conn
+    if ha_conn is not None:
+        return ha_conn
     ha = urlparse(HA_URL)
     ha_host = ha.hostname or "127.0.0.1"
     ha_port = ha.port or (443 if ha.scheme == "https" else 80)
@@ -117,6 +121,17 @@ if HA_SPOT:
     else:
         ha_conn = http.client.HTTPConnection(ha_host, ha_port, timeout=5)
     ha_conn.connect()
+    return ha_conn
+
+def close_ha_conn():
+    global ha_conn
+    if ha_conn is None:
+        return
+    try:
+        ha_conn.close()
+    except Exception:
+        pass
+    ha_conn = None
 
 def api(method, path, body=None):
     payload = None if body is None else json.dumps(body).encode()
@@ -133,17 +148,22 @@ def rpc(method):
 
 def refresh_ha_spot():
     global spot
-    ha_conn.request(
-        "GET",
-        f"/api/states/{HA_SPOT_ENTITY}",
-        headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
-    )
-    resp = ha_conn.getresponse()
-    body = resp.read()
-    if resp.status != 200:
-        raise RuntimeError(f"HA {HA_SPOT_ENTITY} HTTP {resp.status}: {body[:200]!r}")
-    data = json.loads(body)
-    spot = float(data["state"])
+    try:
+        c = ensure_ha_conn()
+        c.request(
+            "GET",
+            f"/api/states/{HA_SPOT_ENTITY}",
+            headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
+        )
+        resp = c.getresponse()
+        body = resp.read()
+        if resp.status != 200:
+            raise RuntimeError(f"HA {HA_SPOT_ENTITY} HTTP {resp.status}: {body[:200]!r}")
+        data = json.loads(body)
+        spot = float(data["state"])
+    except Exception:
+        close_ha_conn()
+        raise
 
 def inputs_ready():
     return (
@@ -263,7 +283,7 @@ def on_message(client, userdata, msg):
 
 print(
     f"xmrig_status: host={HOSTNAME} profit_wanted={PROFIT_WANTED} "
-    f"ha_spot={HA_SPOT} power_topic={TOPIC_POWER}",
+    f"ha_spot={HA_SPOT} ha_url={HA_URL if HA_SPOT else '-'} power_topic={TOPIC_POWER}",
     flush=True,
 )
 if not PROFIT_WANTED:
