@@ -1,5 +1,5 @@
 [Service]
-ExecStart=/root/mqtt-sensors/xmrig.py
+ExecStart=/root/mqtt-sensors/xmrig_status.py
 WorkingDirectory=/root/mqtt-sensors
 Restart=on-failure
 RestartSec=10
