@@ -50,7 +50,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `lightdm_active.service` — `/root/mqtt-sensors`
 - `power_supply_battery.py` — every `/sys/class/power_supply` node with `type=Battery` and `capacity`; rescans the class dir each second (add/remove), holds `capacity` fds while present, clears MQTT discovery on remove; `scope=System` stays on the host HA device, anything else gets its own HA device with `via_device`
 - `power_supply_battery.service` — `/root/mqtt-sensors`
-- `xmrig_status.py` — held HTTP to local XMRig `/2/summary` + `/json_rpc`; hashrate (60s), reject ratio, mining switch, profitability factor; subscribes to retained MQTT for `cpu_package_power_*`, `xmr_per_hs_day_*`, `xmr_eur_price_*`, and `ELECTRICITY_EUR_PER_KWH_TOPIC` (or fixed `ELECTRICITY_EUR_PER_KWH`); remembers last mining hashrate + package W while paused; needs `http.restricted=false` for the switch
+- `xmrig_status.py` — held HTTP to local XMRig `/2/summary` + `/json_rpc`; hashrate (60s), reject ratio, mining switch always; profitability factor only if spot €/kWh is configured and retained MQTT for package power, `xmr_per_hs_day`, and XMR/EUR are present (discovery published on first successful factor); remembers last mining hashrate + package W while paused; needs `http.restricted=false` for the switch
 - `xmrig_status.service` — `/root/mqtt-sensors`
 - `support/` — helpers that publish MQTT for this project but are not host collectors
 - `support/xmr_eur_price.py` — held HTTPS to Kraken public `XMREUR` ticker, last trade as EUR, own HA device `XMR/EUR`, 60 s poll

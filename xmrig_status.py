@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""XMRig hashrate, reject ratio, mining switch, profitability factor → MQTT + HA."""
+"""XMRig hashrate, reject ratio, mining switch, optional profitability factor → MQTT + HA."""
 import json, os, time, http.client
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device, create_client
@@ -16,6 +16,7 @@ XMRIG_TOKEN = os.getenv("XMRIG_TOKEN") or None
 SPOT_TOPIC = os.getenv("ELECTRICITY_EUR_PER_KWH_TOPIC") or None
 SPOT_FIXED = os.getenv("ELECTRICITY_EUR_PER_KWH")
 SPOT_FIXED = float(SPOT_FIXED) if SPOT_FIXED not in (None, "") else None
+PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None
 
 OBJ_HR = f"xmrig_hashrate_{HOSTNAME}"
 OBJ_REJ = f"xmrig_reject_ratio_{HOSTNAME}"
@@ -88,6 +89,7 @@ power_w = None
 xmr_rate = None
 xmr_eur = None
 spot = SPOT_FIXED
+pf_discovered = False
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -111,46 +113,64 @@ def summary():
 def rpc(method):
     api("POST", "/json_rpc", {"method": method, "id": 1})
 
+def inputs_ready():
+    return (
+        PROFIT_WANTED
+        and xmr_rate is not None
+        and xmr_eur is not None
+        and spot is not None
+        and spot > 0
+        and power_w is not None
+    )
+
 def profitability(eff_hr, eff_power):
-    if None in (xmr_rate, xmr_eur, spot) or eff_hr <= 0 or eff_power <= 0 or spot <= 0:
+    if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
         return None
     revenue = eff_hr * xmr_rate / 24.0 * xmr_eur
     cost = eff_power / 1000.0 * spot
     return revenue / cost
 
 def publish_stats(data):
-    global last_hr, last_power
+    global last_hr, last_power, pf_discovered
     total = data["hashrate"]["total"]
     hr = float(total[1] if len(total) > 1 and total[1] is not None else (total[0] or 0))
     good = int(data["results"]["shares_good"])
     shares = int(data["results"]["shares_total"])
     rej = 0.0 if shares == 0 else (shares - good) * 100.0 / shares
     paused = bool(data["paused"])
+    client.publish(STATE_HR, format(hr, ".15g"), retain=True)
+    client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
+    client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
+    if not PROFIT_WANTED:
+        return
     if not paused and hr > 0:
         last_hr = hr
     if not paused and power_w is not None and power_w > 0:
         last_power = power_w
+    if not inputs_ready():
+        return
     eff_hr = hr if not paused and hr > 0 else last_hr
-    eff_power = power_w if not paused and power_w is not None and power_w > 0 else last_power
-    client.publish(STATE_HR, format(hr, ".15g"), retain=True)
-    client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
-    client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
+    eff_power = power_w if not paused and power_w > 0 else last_power
     factor = profitability(eff_hr, eff_power)
-    if factor is not None:
-        client.publish(STATE_PF, format(factor, ".15g"), retain=True)
+    if factor is None:
+        return
+    if not pf_discovered:
+        client.publish(CONFIG_PF, json.dumps(DISCOVERY_PF), retain=True)
+        pf_discovered = True
+    client.publish(STATE_PF, format(factor, ".15g"), retain=True)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR), retain=True)
         client.publish(CONFIG_REJ, json.dumps(DISCOVERY_REJ), retain=True)
         client.publish(CONFIG_SW, json.dumps(DISCOVERY_SW), retain=True)
-        client.publish(CONFIG_PF, json.dumps(DISCOVERY_PF), retain=True)
         client.subscribe(CMD_SW)
-        client.subscribe(TOPIC_POWER)
-        client.subscribe(TOPIC_RATE)
-        client.subscribe(TOPIC_EUR)
-        if SPOT_TOPIC:
-            client.subscribe(SPOT_TOPIC)
+        if PROFIT_WANTED:
+            client.subscribe(TOPIC_POWER)
+            client.subscribe(TOPIC_RATE)
+            client.subscribe(TOPIC_EUR)
+            if SPOT_TOPIC:
+                client.subscribe(SPOT_TOPIC)
         client.publish(AVAIL_T, "online", retain=True)
 
 def on_message(client, userdata, msg):
@@ -163,6 +183,8 @@ def on_message(client, userdata, msg):
         elif payload == "OFF":
             rpc("pause")
         publish_stats(summary())
+        return
+    if not PROFIT_WANTED:
         return
     if topic == TOPIC_POWER:
         power_w = float(payload)
