@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """XMRig hashrate, reject ratio, mining switch, optional profitability factor → MQTT + HA."""
 import json, os, time, http.client
+from urllib.parse import urlparse
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device, create_client
 )
@@ -16,7 +17,11 @@ XMRIG_TOKEN = os.getenv("XMRIG_TOKEN") or None
 SPOT_TOPIC = os.getenv("ELECTRICITY_EUR_PER_KWH_TOPIC") or None
 SPOT_FIXED = os.getenv("ELECTRICITY_EUR_PER_KWH")
 SPOT_FIXED = float(SPOT_FIXED) if SPOT_FIXED not in (None, "") else None
-PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None
+HA_URL = os.getenv("HA_URL", "http://127.0.0.1:8123").rstrip("/")
+HA_TOKEN = os.getenv("HA_TOKEN") or None
+HA_SPOT_ENTITY = os.getenv("HA_ELECTRICITY_ENTITY", "sensor.porssisahko_electricity_price")
+HA_SPOT = HA_TOKEN is not None and SPOT_TOPIC is None and SPOT_FIXED is None
+PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None or HA_TOKEN is not None
 
 OBJ_HR = f"xmrig_hashrate_{HOSTNAME}"
 OBJ_REJ = f"xmrig_reject_ratio_{HOSTNAME}"
@@ -90,6 +95,7 @@ xmr_rate = None
 xmr_eur = None
 spot = SPOT_FIXED
 pf_discovered = False
+last_ha_spot = 0.0
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -99,6 +105,17 @@ def auth_headers():
 
 conn = http.client.HTTPConnection(XMRIG_HOST, XMRIG_PORT, timeout=5)
 conn.connect()
+
+ha_conn = None
+if HA_SPOT:
+    ha = urlparse(HA_URL)
+    ha_host = ha.hostname or "127.0.0.1"
+    ha_port = ha.port or (443 if ha.scheme == "https" else 80)
+    if ha.scheme == "https":
+        ha_conn = http.client.HTTPSConnection(ha_host, ha_port, timeout=5)
+    else:
+        ha_conn = http.client.HTTPConnection(ha_host, ha_port, timeout=5)
+    ha_conn.connect()
 
 def api(method, path, body=None):
     payload = None if body is None else json.dumps(body).encode()
@@ -112,6 +129,17 @@ def summary():
 
 def rpc(method):
     api("POST", "/json_rpc", {"method": method, "id": 1})
+
+def refresh_ha_spot():
+    global spot
+    ha_conn.request(
+        "GET",
+        f"/api/states/{HA_SPOT_ENTITY}",
+        headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
+    )
+    resp = ha_conn.getresponse()
+    data = json.loads(resp.read())
+    spot = float(data["state"])
 
 def inputs_ready():
     return (
@@ -131,7 +159,7 @@ def profitability(eff_hr, eff_power):
     return revenue / cost
 
 def publish_stats(data):
-    global last_hr, last_power, pf_discovered
+    global last_hr, last_power, pf_discovered, last_ha_spot
     total = data["hashrate"]["total"]
     hr = float(total[1] if len(total) > 1 and total[1] is not None else (total[0] or 0))
     good = int(data["results"]["shares_good"])
@@ -143,6 +171,10 @@ def publish_stats(data):
     client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
     if not PROFIT_WANTED:
         return
+    now = time.monotonic()
+    if HA_SPOT and now - last_ha_spot >= 60.0:
+        refresh_ha_spot()
+        last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
     if not paused and power_w is not None and power_w > 0:
@@ -212,3 +244,5 @@ finally:
     client.loop_stop()
     client.disconnect()
     conn.close()
+    if ha_conn is not None:
+        ha_conn.close()
