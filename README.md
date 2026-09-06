@@ -1,8 +1,8 @@
 # mqtt-sensors
 
-Long-lived root processes that publish host stats to MQTT with Home Assistant discovery. One process per collector, one source held open. No framework, no `requirements.txt`, no pip.
+Long-lived root processes that publish host stats to MQTT with Home Assistant discovery. One process per collector; each holds open a source or polls one in-process. No framework, no `requirements.txt`, no pip.
 
-Every collector on a host shares one HA device named after the hostname (`linux_host_<hostname>`). The screenshot is the farmer host `M710q` (CPU RAPL + farm size). Recompute and harvester processing times land on whichever machine actually runs those processes.
+Collectors on a host share one HA device named after the hostname (`linux_host_<hostname>`), except device-scoped power-supply batteries, which get their own HA device linked with `via_device`. The screenshot is the farmer host `M710q` (CPU RAPL + farm size). Recompute and harvester processing times land on whichever machine actually runs those processes.
 
 ![Home Assistant](screen.png)
 
@@ -59,7 +59,6 @@ session [success=1 default=ignore] pam_succeed_if.so quiet user ingroup sshfs
 `success=1` skips the next line (`pam_systemd`) for that group only. Do not put that skip in front of `@include common-session` — it would skip the whole include. `pam-auth-update` can rewrite `common-session`; re-check the skip after it runs. Then `sshd -t` and reload sshd.
 
 If you sshfs as a user who is already on a seat, they were already in the list; the mount does not add a new name.
-
 
 ## Run
 
