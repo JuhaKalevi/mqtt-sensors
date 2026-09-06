@@ -1,0 +1,8 @@
+[Service]
+ExecStart=/root/mqtt-sensors/power_supply_battery.py
+WorkingDirectory=/root/mqtt-sensors
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
