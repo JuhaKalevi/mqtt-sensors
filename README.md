@@ -20,12 +20,13 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 | `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
 | `lightdm_active.py` | binary: LightDM unit running | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl`) |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
+| `xmrig.py` | hashrate (H/s, 60s), reject ratio (%), mining switch | held HTTP to XMRig `/2/summary` + `/json_rpc` pause/resume |
 
-Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm needs a local farmer and full node. Recompute needs `chia_recompute_server` in the journal. Harvester follows `plots were eligible for farming … Time: N s. Total N plots` in `debug.log` (via `chia_root()`). Chia paths are uid 1000's `.chia/mainnet`, never `/root` and never a username. Power supply batteries are any sysfs node with `type=Battery` and a `capacity` file (Logitech `hidpp_battery_*`, laptop `BAT*`, and the like). The collector rescans that class dir each second so plug/unplug is picked up without a restart, and clears retained discovery when a node disappears. `scope=System` (laptop/UPS) stays on the host HA device; other scopes get their own HA device via the host so a mouse battery does not claim the host device battery badge.
+Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm needs a local farmer and full node. Recompute needs `chia_recompute_server` in the journal. Harvester follows `plots were eligible for farming … Time: N s. Total N plots` in `debug.log` (via `chia_root()`). Chia paths are uid 1000's `.chia/mainnet`, never `/root` and never a username. Power supply batteries are any sysfs node with `type=Battery` and a `capacity` file (Logitech `hidpp_battery_*`, laptop `BAT*`, and the like). The collector rescans that class dir each second so plug/unplug is picked up without a restart, and clears retained discovery when a node disappears. `scope=System` (laptop/UPS) stays on the host HA device; other scopes get their own HA device via the host so a mouse battery does not claim the host device battery badge. XMRig needs its HTTP API on localhost (`XMRIG_HOST`/`XMRIG_PORT`/`XMRIG_TOKEN` in `.env`); the mining switch requires `http.restricted=false` (XMRig is read-only or full write — there is no pause-only ACL). Reject ratio is `(shares_total - shares_good) / shares_total`.
 
 Energy is `total_increasing` kWh integrated in RAM; HA expects it to start at 0. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2 s–5 s is normal — do not average. Harvester samples once per signage point (~every 9 s); a gap or a time climbing toward the signage window is the error signal.
 
-Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>`, `power_supply_<host>`.
+Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>`, `power_supply_<host>`, `xmrig_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
 
 ## loginctl active users
 
@@ -72,6 +73,9 @@ MQTT_PORT=1883
 MQTT_USER=
 MQTT_PASS=
 MQTT_PREFIX=homeassistant
+XMRIG_HOST=127.0.0.1
+XMRIG_PORT=44444
+XMRIG_TOKEN=
 ```
 
 Matching `*.service` stubs: `ExecStart`, `WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Enable the ones you want as system units.
