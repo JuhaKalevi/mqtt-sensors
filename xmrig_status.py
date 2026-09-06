@@ -97,6 +97,7 @@ spot = SPOT_FIXED
 pf_discovered = False
 last_ha_spot = 0.0
 last_missing_print = 0.0
+last_xmrig_print = 0.0
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -137,8 +138,11 @@ def api(method, path, body=None):
     payload = None if body is None else json.dumps(body).encode()
     conn.request(method, path, body=payload, headers=auth_headers())
     resp = conn.getresponse()
-    data = resp.read()
-    return json.loads(data) if data else {}
+    raw = resp.read()
+    data = json.loads(raw) if raw else {}
+    if resp.status >= 400:
+        data["_http_status"] = resp.status
+    return data
 
 def summary():
     return api("GET", "/2/summary")
@@ -207,7 +211,19 @@ def profitability(eff_hr, eff_power):
     return revenue / cost
 
 def publish_stats(data):
-    global last_hr, last_power, pf_discovered, last_ha_spot, last_missing_print
+    global last_hr, last_power, pf_discovered, last_ha_spot, last_missing_print, last_xmrig_print
+    if "hashrate" not in data or "results" not in data:
+        now = time.monotonic()
+        if now - last_xmrig_print >= 60.0:
+            status = data.get("_http_status")
+            keys = sorted(k for k in data if not str(k).startswith("_"))
+            print(
+                f"xmrig_status: XMRig summary missing hashrate/results "
+                f"http={status} keys={keys} body={data!r}"[:500],
+                flush=True,
+            )
+            last_xmrig_print = now
+        return
     total = data["hashrate"]["total"]
     hr = float(total[1] if len(total) > 1 and total[1] is not None else (total[0] or 0))
     good = int(data["results"]["shares_good"])
@@ -297,7 +313,13 @@ client.loop_start()
 
 try:
     while True:
-        publish_stats(summary())
+        try:
+            publish_stats(summary())
+        except Exception as err:
+            now = time.monotonic()
+            if now - last_xmrig_print >= 60.0:
+                print(f"xmrig_status: XMRig poll failed: {err}", flush=True)
+                last_xmrig_print = now
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
