@@ -60,4 +60,5 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
 - `SECURITY.md` — root + supply-chain rules, distro packages only
-- `screen.png` — example HA device page (farmer host; more shots live as GitLab issues, not extra files)
+- `screen.png` — example HA device page (farmer host `M710q`)
+- `screen2.png` — example HA device page (miner host `B850Pro`, XMRig + profitability)

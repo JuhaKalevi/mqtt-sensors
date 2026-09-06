@@ -2,9 +2,11 @@
 
 Long-lived root processes that publish host stats to MQTT with Home Assistant discovery. One process per collector; each holds open a source or polls one in-process. No framework, no `requirements.txt`, no pip.
 
-Collectors on a host share one HA device named after the hostname (`linux_host_<hostname>`), except device-scoped power-supply batteries, which get their own HA device linked with `via_device`. The screenshot is the farmer host `M710q` (CPU RAPL + farm size). Recompute and harvester processing times land on whichever machine actually runs those processes.
+Collectors on a host share one HA device named after the hostname (`linux_host_<hostname>`), except device-scoped power-supply batteries, which get their own HA device linked with `via_device`. Screenshots: farmer host `M710q` (CPU RAPL + farm size), and miner host `B850Pro` (package/GPU power, XMRig hashrate/switch/reject + profitability factor). Recompute and harvester processing times land on whichever machine actually runs those processes.
 
-![Home Assistant](screen.png)
+![Home Assistant — M710q](screen.png)
+
+![Home Assistant — B850Pro](screen2.png)
 
 [SECURITY.md](SECURITY.md) is the supply-chain / root policy. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it.
 
