@@ -38,8 +38,8 @@ CONFIG_REJ = f"{PREFIX}/sensor/{OBJ_REJ}/config"
 CONFIG_SW = f"{PREFIX}/switch/{OBJ_SW}/config"
 CONFIG_PF = f"{PREFIX}/sensor/{OBJ_PF}/config"
 TOPIC_POWER = f"{PREFIX}/sensor/cpu_package_power_{HOSTNAME}/state"
-TOPIC_RATE = f"{PREFIX}/sensor/xmr_per_hs_day_{HOSTNAME}/state"
-TOPIC_EUR = f"{PREFIX}/sensor/xmr_eur_price_{HOSTNAME}/state"
+TOPIC_RATE = f"{PREFIX}/sensor/xmr_per_hs_day/state"
+TOPIC_EUR = f"{PREFIX}/sensor/xmr_eur_price/state"
 
 DISCOVERY_HR = {
     "name": "XMRig Hashrate",

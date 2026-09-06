@@ -6,18 +6,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mqtt_common import get_hostname, get_mqtt_settings, create_client
 
 HOSTNAME = get_hostname()
-DEVICE_ID = f"xmr_network_{HOSTNAME}"
+DEVICE_ID = "xmr_network"
 DEVICE = {"identifiers": [DEVICE_ID], "name": "Monero"}
 CLIENT_ID = f"xmr-network-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 ATOMIC = 1_000_000_000_000
 
-OBJ_DIFF = f"xmr_difficulty_{HOSTNAME}"
-OBJ_HR = f"xmr_network_hashrate_{HOSTNAME}"
-OBJ_REW = f"xmr_block_reward_{HOSTNAME}"
-OBJ_RATE = f"xmr_per_hs_day_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/xmr_network_{HOSTNAME}/availability"
+OBJ_DIFF = "xmr_difficulty"
+OBJ_HR = "xmr_network_hashrate"
+OBJ_REW = "xmr_block_reward"
+OBJ_RATE = "xmr_per_hs_day"
+AVAIL_T = f"{PREFIX}/sensor/xmr_network/availability"
 STATE_DIFF = f"{PREFIX}/sensor/{OBJ_DIFF}/state"
 STATE_HR = f"{PREFIX}/sensor/{OBJ_HR}/state"
 STATE_REW = f"{PREFIX}/sensor/{OBJ_REW}/state"

@@ -6,14 +6,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mqtt_common import get_hostname, get_mqtt_settings, create_client
 
 HOSTNAME = get_hostname()
-DEVICE_ID = f"xmr_eur_price_{HOSTNAME}"
+DEVICE_ID = "xmr_eur_price"
 DEVICE = {"identifiers": [DEVICE_ID], "name": "XMR/EUR"}
 CLIENT_ID = f"xmr-eur-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ = f"xmr_eur_price_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/xmr_eur_{HOSTNAME}/availability"
+OBJ = "xmr_eur_price"
+AVAIL_T = f"{PREFIX}/sensor/xmr_eur/availability"
 STATE = f"{PREFIX}/sensor/{OBJ}/state"
 CONFIG = f"{PREFIX}/sensor/{OBJ}/config"
 

@@ -52,10 +52,10 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `power_supply_battery.service` — `/root/mqtt-sensors`
 - `xmrig_status.py` — held HTTP to local XMRig `/2/summary` + `/json_rpc`; hashrate (60s), reject ratio, mining switch always; profitability factor when spot is available (default: HA `sensor.porssisahko_electricity_price` via `HA_TOKEN`/`HA_URL`, else `ELECTRICITY_EUR_PER_KWH_TOPIC` or `ELECTRICITY_EUR_PER_KWH`) and retained MQTT has package power, `xmr_per_hs_day`, XMR/EUR; discovery on first successful factor; remembers last mining hashrate + package W while paused; needs `http.restricted=false` for the switch
 - `xmrig_status.service` — `/root/mqtt-sensors`
-- `support/` — helpers that publish MQTT for this project but are not host collectors
-- `support/xmr_eur_price.py` — held HTTPS to Kraken public `XMREUR` ticker, last trade as EUR, own HA device `XMR/EUR`, 60 s poll
+- `support/` — helpers that publish MQTT for this project but are not host collectors; global MQTT object ids / unique_ids (no hostname). Client id may still include hostname so two hosts do not collide if both run a helper
+- `support/xmr_eur_price.py` — held HTTPS to Kraken public `XMREUR` ticker, last trade as EUR, own HA device `XMR/EUR`, global object id `xmr_eur_price` (no hostname), 60 s poll
 - `support/xmr_eur_price.service` — `/root/mqtt-sensors`
-- `support/xmr_network.py` — held HTTPS to xmrchain.net; difficulty, network hashrate, last-block coinbase reward (XMR), XMR per H/s per day; own HA device `Monero`; 60 s poll
+- `support/xmr_network.py` — held HTTPS to xmrchain.net; difficulty, network hashrate, last-block coinbase reward (XMR), XMR per H/s per day; own HA device `Monero`; global object ids (no hostname); 60 s poll
 - `support/xmr_network.service` — `/root/mqtt-sensors`
 - `*.service` — path stubs under `/root/mqtt-sensors`
 - `.env` — gitignored
