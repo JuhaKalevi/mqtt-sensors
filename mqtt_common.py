@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
-import os, json, socket, pwd
+import os, json, socket
 from pathlib import Path
 import paho.mqtt.client as mqtt
 
@@ -19,6 +19,7 @@ def get_hostname():
     return socket.gethostname().split(".")[0]
 
 def chia_root():
+    import pwd
     return Path(pwd.getpwuid(1000).pw_dir) / ".chia" / "mainnet"
 
 def get_mqtt_settings():

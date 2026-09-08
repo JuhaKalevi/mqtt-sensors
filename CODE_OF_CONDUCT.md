@@ -25,3 +25,7 @@ Operational detail and one-off sensor notes belong in `README.md` or a short com
 ## Pull requests
 
 Match the style of the neighbor script. Prefer deleting lines. If a change needs a long apology in the description, it is probably the wrong change for this repo.
+
+## Windows
+
+`windows/` copies the Linux power collectors as reference and may assume LibreHardwareMonitor or `nvidia-smi` is already running. That exception does not apply to the Linux collectors. Still fail-fast: missing source exits. Do not vendor a driver.

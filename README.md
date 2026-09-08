@@ -8,7 +8,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 
 ![Home Assistant — B850Pro](screen2.png)
 
-[SECURITY.md](SECURITY.md) is the supply-chain / root policy. [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is fail-fast / minimalism. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it.
+[SECURITY.md](SECURITY.md) is the supply-chain / root policy. [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is fail-fast / minimalism. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it. Windows CPU/GPU copies of the Linux power collectors live in [windows/](windows/README.md).
 
 ## Collectors
 
@@ -16,6 +16,8 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 |---|---|---|
 | `cpu_package_power.py` | package power (W) and energy (kWh, RAM only, resets on start) | RAPL `energy_uj` fd |
 | `nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` |
+| `windows/cpu_package_power.py` | package power (W) and energy (kWh, RAM only) | LibreHardwareMonitor WMI `CPU Package` via one PowerShell loop |
+| `windows/nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` (no `select`) |
 | `chia_farm_size.py` | plots, on-disk TiB, effective TiB, estimated netspace EiB, ETA to win (s) | farmer `:8559` + full node `:8555` TLS |
 | `chia_recompute_server_processing_time.py` | recompute processing time (s, full precision, display 1 decimal) | `journalctl -u chia_recompute_server -f` |
 | `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |

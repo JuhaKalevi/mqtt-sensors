@@ -61,5 +61,6 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `.env` — gitignored
 - `SECURITY.md` — root + supply-chain rules, distro packages only
 - `CODE_OF_CONDUCT.md` — fail-fast, minimal surface, assume prerequisites; systemd restarts
+- `windows/` — Windows copies of the CPU/GPU power collectors; Linux scripts are the reference; share `mqtt_common` only; see `windows/README.md`
 - `screen.png` — example HA device page (farmer host `M710q`)
 - `screen2.png` — example HA device page (miner host `B850Pro`, XMRig + profitability)
