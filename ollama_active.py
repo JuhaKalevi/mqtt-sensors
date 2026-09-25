@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Ollama unit active → MQTT + Home Assistant switch (cgroup; systemctl start/stop only in control mode)."""
+import json, time
+from mqtt_common import (
+    get_hostname, get_mqtt_settings, make_device, create_client, make_switch_discovery,
+    switch_mode, make_switch_on_message, systemd_unit_state, systemd_unit_command
+)
+
+UNIT = "ollama.service"
+HOSTNAME = get_hostname()
+DEVICE, DEVICE_ID = make_device(HOSTNAME)
+CLIENT_ID = f"ollama-{HOSTNAME}"
+settings = get_mqtt_settings()
+PREFIX = settings["prefix"]
+MODE = switch_mode("OLLAMA_SWITCH_MODE")
+
+OBJ = f"ollama_active_{HOSTNAME}"
+AVAIL_T = f"{PREFIX}/sensor/ollama_{HOSTNAME}/availability"
+STATE = f"{PREFIX}/switch/{OBJ}/state"
+CMD = f"{PREFIX}/switch/{OBJ}/set"
+CONFIG = f"{PREFIX}/switch/{OBJ}/config"
+DISCOVERY = make_switch_discovery("Ollama Active", STATE, CMD, AVAIL_T, OBJ, DEVICE)
+
+def state():
+    return systemd_unit_state(UNIT)
+
+def act(payload):
+    systemd_unit_command(UNIT, payload)
+
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    if reason_code == 0:
+        client.publish(CONFIG, json.dumps(DISCOVERY), retain=True)
+        client.subscribe(CMD)
+        client.publish(AVAIL_T, "online", retain=True)
+
+print(f"ollama_active: host={HOSTNAME} mode={MODE}", flush=True)
+
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client.on_connect = on_connect
+client.on_message = make_switch_on_message("ollama_active", MODE, STATE, state, act)
+client.connect(settings["host"], settings["port"], keepalive=60)
+client.loop_start()
+
+try:
+    while True:
+        client.publish(STATE, state(), retain=True)
+        time.sleep(1.0)
+except KeyboardInterrupt:
+    pass
+finally:
+    client.publish(AVAIL_T, "offline", retain=True)
+    client.loop_stop()
+    client.disconnect()

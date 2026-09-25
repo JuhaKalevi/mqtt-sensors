@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
-import os, json, socket
+import os, json, socket, subprocess
 from pathlib import Path
 import paho.mqtt.client as mqtt
 
@@ -62,6 +62,44 @@ def make_energy_discovery(name, state_topic, availability_topic, unique_id, devi
         name, state_topic, availability_topic, unique_id, device,
         unit="kWh", device_class="energy", state_class="total_increasing"
     )
+
+def make_switch_discovery(name, state_topic, command_topic, availability_topic, unique_id, device):
+    return {
+        "name": name,
+        "state_topic": state_topic,
+        "command_topic": command_topic,
+        "availability_topic": availability_topic,
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "payload_on": "ON",
+        "payload_off": "OFF",
+        "unique_id": unique_id,
+        "device": device,
+    }
+
+def switch_mode(env_name):
+    mode = os.getenv(env_name) or "read_only"
+    if mode not in ("read_only", "control"):
+        raise SystemExit(f"{env_name} must be read_only or control, got {mode!r}")
+    return mode
+
+def make_switch_on_message(tag, mode, state_topic, get_state, act):
+    def on_message(client, userdata, msg):
+        payload = msg.payload.decode()
+        if mode == "control" and payload in ("ON", "OFF"):
+            act(payload)
+        else:
+            print(f"{tag}: ignored {payload!r} (mode={mode})", flush=True)
+        client.publish(state_topic, get_state(), retain=True)
+    return on_message
+
+def systemd_unit_state(unit):
+    return "ON" if os.path.isdir(f"/sys/fs/cgroup/system.slice/{unit}") else "OFF"
+
+def systemd_unit_command(unit, payload):
+    action = "start" if payload == "ON" else "stop"
+    rc = subprocess.run(["systemctl", action, unit]).returncode
+    print(f"{payload} -> systemctl {action} {unit} rc={rc}", flush=True)
 
 def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
