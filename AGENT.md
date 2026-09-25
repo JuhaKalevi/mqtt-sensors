@@ -32,7 +32,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - Treat supply-chain risk as a reason to rewrite a sensor in stdlib rather than to import one more thing. Existing sensors need not be rewritten on sight.
 - Do not persist energy, add `last_reset`, MQTT TLS, or HA extras unless asked.
 - Do not introduce a Sensor class. Different sources get their own small scripts.
-- Code reuse: each source gets its own small script and its own normal (non-template) systemd unit that can be enabled from the repo path. Do not generalize whole collectors (no template units, no per-instance settings). But when two scripts share logic that is plausibly useful elsewhere (reading unit state, a switch mode check, switch discovery/command handling), extract that part into `mqtt_common.py` instead of copying it. Leave the rest of each script explicit.
+- Code reuse: each source gets its own small script and its own normal (non-template) systemd unit that can be enabled from the repo path. Do not generalize whole collectors (no template units, no per-instance settings). But when two scripts share logic that is plausibly useful elsewhere (reading unit state, a switch mode check, switch discovery/command handling), extract that part into `mqtt_common.py` instead of copying it, as a building block something else can easily leverage later, not a merged collector (`CODE_OF_CONDUCT.md`, Keep AGENT.md small). Leave the rest of each script explicit.
 - Leave existing comments and defensive parsing in the current scripts. Do not clean them up and do not copy them into new ones.
 
 ## Layout

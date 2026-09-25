@@ -20,7 +20,7 @@ Scripts assume their source works: XMRig HTTP with the token you set, retained M
 
 ## Keep AGENT.md small
 
-Operational detail and one-off sensor notes belong in `README.md` or a short commit message. Security reasoning belongs in `SECURITY.md`. Do not grow `AGENT.md` into a novel. Do not invent abstractions (`Sensor` classes, shared supervisors) to avoid repeating a small script.
+Operational detail and one-off sensor notes belong in `README.md` or a short commit message. Security reasoning belongs in `SECURITY.md`. Do not grow `AGENT.md` into a novel. Do not invent abstractions (`Sensor` classes, shared supervisors) to avoid repeating a small script. A generalisation may cross that line only if it is built so something else can easily leverage it later: a reusable building block in `mqtt_common.py` (like the switch and systemd unit helpers), not a merged collector. Each source still keeps its own script and unit.
 
 ## Pull requests
 
