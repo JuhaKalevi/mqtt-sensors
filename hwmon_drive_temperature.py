@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Drive temperature (drivetemp + nvme hwmon) → MQTT + Home Assistant discovery (sysfs)."""
+import json, os, re, sys, time
+from pathlib import Path
+from mqtt_common import (
+    get_hostname, get_mqtt_settings, make_device,
+    make_sensor_discovery, create_client
+)
+
+HOSTNAME = get_hostname()
+DEVICE, DEVICE_ID = make_device(HOSTNAME)
+CLIENT_ID = f"hwmon-drive-temperature-{HOSTNAME}"
+settings = get_mqtt_settings()
+PREFIX = settings["prefix"]
+INTERVAL = float(os.getenv("DRIVE_TEMPERATURE_INTERVAL") or "60")
+AVAIL_T = f"{PREFIX}/sensor/hwmon_drive_temperature_{HOSTNAME}/availability"
+ROOT = Path("/sys/class/hwmon")
+drives = {}
+
+def read_opt(path):
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return ""
+
+def identity(hw):
+    dev = (hw / "device").resolve()
+    model = read_opt(dev / "model")
+    serial = read_opt(dev / "serial")
+    if not serial:
+        try:
+            serial = (dev / "vpd_pg80").read_bytes()[4:].decode(errors="ignore").strip()
+        except OSError:
+            serial = ""
+    ident = serial or read_opt(dev / "wwid")
+    if not ident:
+        return None
+    return model or "Drive", serial, re.sub(r"[^a-z0-9]+", "_", ident.lower()).strip("_")
+
+def open_drive(hw):
+    if read_opt(hw / "name") not in ("drivetemp", "nvme"):
+        return None
+    ids = identity(hw)
+    if not ids:
+        return None
+    try:
+        f = open(hw / "temp1_input")
+    except OSError:
+        return None
+    model, serial, ident = ids
+    obj = f"hwmon_drive_temperature_{ident}_{HOSTNAME}"
+    state = f"{PREFIX}/sensor/{obj}/state"
+    name = f"{model} {serial} Temperature" if serial else f"{model} Temperature"
+    return {
+        "fd": f,
+        "state": state,
+        "config": f"{PREFIX}/sensor/{obj}/config",
+        "discovery": make_sensor_discovery(
+            name, state, AVAIL_T, obj, DEVICE,
+            unit="°C", device_class="temperature", state_class="measurement"
+        ),
+    }
+
+def drop_drive(name):
+    d = drives.pop(name, None)
+    if not d:
+        return
+    try:
+        d["fd"].close()
+    except OSError:
+        pass
+    client.publish(d["config"], "", retain=True)
+
+def sync_drives():
+    present = set()
+    for hw in sorted(ROOT.iterdir()):
+        present.add(hw.name)
+        if hw.name in drives:
+            continue
+        d = open_drive(hw)
+        if not d:
+            continue
+        drives[hw.name] = d
+        client.publish(d["config"], json.dumps(d["discovery"]), retain=True)
+    for name in list(drives):
+        if name not in present:
+            drop_drive(name)
+
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    if reason_code == 0:
+        for d in drives.values():
+            client.publish(d["config"], json.dumps(d["discovery"]), retain=True)
+        client.publish(AVAIL_T, "online", retain=True)
+
+if not any(read_opt(hw / "name") in ("drivetemp", "nvme") for hw in ROOT.iterdir()):
+    sys.exit(f"hwmon_drive_temperature: no drivetemp or nvme hwmon under {ROOT}; load the module: modprobe drivetemp")
+
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client.on_connect = on_connect
+client.connect(settings["host"], settings["port"], keepalive=60)
+client.loop_start()
+
+try:
+    while True:
+        sync_drives()
+        for d in drives.values():
+            try:
+                d["fd"].seek(0)
+                val = int(d["fd"].read())
+            except (OSError, ValueError):
+                continue
+            client.publish(d["state"], "%.1f" % (val / 1000.0), retain=True)
+        time.sleep(INTERVAL)
+except KeyboardInterrupt:
+    pass
+finally:
+    client.publish(AVAIL_T, "offline", retain=True)
+    client.loop_stop()
+    client.disconnect()
+    for d in drives.values():
+        d["fd"].close()

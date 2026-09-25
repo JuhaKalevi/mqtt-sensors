@@ -23,6 +23,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 | `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |
 | `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
 | `lightdm_active.py` | switch: LightDM unit running; start/stop only with `LIGHTDM_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl` to read state) |
+| `hwmon_drive_temperature.py` | per-drive temperature (°C), SATA/SAS (`drivetemp`) and NVMe | `/sys/class/hwmon` polled every 60 s (`DRIVE_TEMPERATURE_INTERVAL`); `temp1_input` fd held while the node exists |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
 | `xmrig_status.py` | hashrate (H/s, 60s), reject ratio (%), mining switch, profitability factor (revenue/cost) | XMRig HTTP + MQTT inputs; remembers hashrate/W while paused |
 | `support/xmr_eur_price.py` | XMR/EUR spot (EUR) | held HTTPS to Kraken public ticker, 60 s |
@@ -32,7 +33,7 @@ Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm ne
 
 Energy is `total_increasing` kWh integrated in RAM; HA expects it to start at 0. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2 s–5 s is normal — do not average. Harvester samples once per signage point (~every 9 s); a gap or a time climbing toward the signage window is the error signal.
 
-Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>`, `power_supply_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
+Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>`, `power_supply_<host>`, `hwmon_drive_temperature_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
 
 ## loginctl active users
 
@@ -78,6 +79,19 @@ If you sshfs as a user who is already on a seat, they were already in the list; 
 
 Any other value exits.
 
+## Drive temperature
+
+`hwmon_drive_temperature.py` does not run `smartctl` or anything else. It reads `temp1_input` (millidegrees C) from every `/sys/class/hwmon/hwmon*` whose `name` is `drivetemp` (SATA/SAS) or `nvme`, and publishes one `°C` / `temperature` sensor per drive on the host HA device. The drive comes from the hwmon `device` link: the SCSI device's `model` + serial (`vpd_pg80`, else `wwid`), or the NVMe controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<serial>_<host>`, so they survive `sdX` / `nvmeN` reshuffles. The class dir is rescanned each sample; a new drive gets discovery, a vanished one has its retained discovery cleared. A failed read (drive asleep, `ENODATA`) skips that sample. With no `drivetemp` or `nvme` hwmon at start it exits.
+
+NVMe needs nothing. SATA/SAS needs the `drivetemp` module:
+
+```
+modprobe drivetemp
+echo drivetemp > /etc/modules-load.d/drivetemp.conf
+```
+
+Standby: the kernel docs ([drivetemp](https://docs.kernel.org/hwmon/drivetemp.html), usage note) say reading the temperature may reset the spin-down timer on some drives (seen on WD120EFAX; `hddtemp`/`smartd` do the same). On that drive a read in standby still works and does not spin it up; other drives are unknown. The workaround is to read at intervals longer than twice the spin-down time, otherwise affected drives never spin down. Default is 60 s; set `DRIVE_TEMPERATURE_INTERVAL` (seconds) above twice your spin-down time if drives should sleep.
+
 ## Run
 
 As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`.
@@ -99,6 +113,7 @@ HA_ELECTRICITY_ENTITY=sensor.porssisahko_electricity_price
 ELECTRICITY_EUR_PER_KWH_TOPIC=
 ELECTRICITY_EUR_PER_KWH=
 LIGHTDM_SWITCH_MODE=read_only
+DRIVE_TEMPERATURE_INTERVAL=60
 ```
 
 Matching `*.service` stubs: `ExecStart`, `WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Enable the ones you want as system units.
