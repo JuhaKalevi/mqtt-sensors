@@ -90,9 +90,12 @@ Upgrading a LightDM host: nothing changes for HA or `.env` (same entity, topics,
 
 ## Other init systems
 
-Service state and start/stop go through `service_manager()` in `mqtt_common.py`, whose object has `is_active(name)`, `start(name)`, `stop(name)` (bare name like `lightdm`). `SystemdServiceManager` (cgroup dir read, `systemctl start|stop`) is the only backend shipped. For OpenRC, runit, s6 or another init, write a class with those three methods and return it from `service_manager()`; the collectors stay untouched. That backend is not provided here.
+Every systemd interaction goes through an interface in `mqtt_common.py`; collectors never call systemd tools or read its files directly:
 
-The `*.service` files are systemd units; other init systems need their own service definitions. `chia_recompute_server_processing_time.py` follows `journalctl -u chia_recompute_server` and `loginctl_active_users.py` reads logind's `/run/systemd/users` (also written by elogind); those are log and session sources, not service control, so they are outside the interface.
+- `service_manager()`: `is_active(name)`, `start(name)`, `stop(name)`, `follow_log(name)` (context manager yielding new log lines). `name` is the bare service name (`lightdm`, `ollama`, `chia_recompute_server`). Shipped backend `SystemdServiceManager`: cgroup dir read, `systemctl start|stop`, `journalctl -u <name> -f -n 0 -o cat`. Used by `lightdm_active.py`, `ollama_active.py`, `chia_recompute_server_processing_time.py`.
+- `session_source()`: `active_users()` (names with an `active` or `online` session). Shipped backend `LogindSessionSource`: `/run/systemd/users`, which elogind also writes, so elogind hosts need nothing. Used by `loginctl_active_users.py`.
+
+For OpenRC, runit, s6 or another init, write a class with the same methods and return it from that function; the collectors stay untouched. Those backends are not provided here. The `*.service` files are systemd units; other init systems need their own service definitions.
 
 ## Drive temperature
 

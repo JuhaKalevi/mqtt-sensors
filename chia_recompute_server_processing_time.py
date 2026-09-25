@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Chia recompute server processing time → MQTT + Home Assistant discovery (journalctl -f)."""
-import json, re, subprocess
+"""Chia recompute server processing time → MQTT + Home Assistant discovery (service_manager().follow_log)."""
+import json, re
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device,
-    make_sensor_discovery, create_client
+    make_sensor_discovery, create_client, service_manager
 )
 
 HOSTNAME = get_hostname()
 DEVICE, DEVICE_ID = make_device(HOSTNAME)
 CLIENT_ID = f"chia-recompute-server-{HOSTNAME}"
+SERVICE = "chia_recompute_server"
+SERVICES = service_manager()
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
@@ -36,26 +38,16 @@ client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
-proc = subprocess.Popen(
-    ["journalctl", "-u", "chia_recompute_server", "-f", "-n", "0", "-o", "cat", "--no-pager"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.DEVNULL,
-    text=True,
-    bufsize=1,
-)
-
-try:
-    for line in proc.stdout:
-        m = TOOK.search(line)
-        if not m:
-            continue
-        client.publish(STATE_TIME, format(float(m.group(1)) / 1000.0, ".15g"), retain=True)
-except KeyboardInterrupt:
-    pass
-finally:
-    client.publish(AVAIL_T, "offline", retain=True)
-    client.loop_stop()
-    client.disconnect()
-    if proc.poll() is None:
-        proc.terminate()
-        proc.wait()
+with SERVICES.follow_log(SERVICE) as lines:
+    try:
+        for line in lines:
+            m = TOOK.search(line)
+            if not m:
+                continue
+            client.publish(STATE_TIME, format(float(m.group(1)) / 1000.0, ".15g"), retain=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.publish(AVAIL_T, "offline", retain=True)
+        client.loop_stop()
+        client.disconnect()

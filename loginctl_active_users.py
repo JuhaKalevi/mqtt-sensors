@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""loginctl active users → MQTT + Home Assistant discovery (/run/systemd/users)."""
-import json, os, time
+"""loginctl active users → MQTT + Home Assistant discovery (session_source())."""
+import json, time
 from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device, create_client
+    get_hostname, get_mqtt_settings, make_device, create_client, session_source
 )
 
 HOSTNAME = get_hostname()
@@ -26,27 +26,10 @@ DISCOVERY = {
     "device": DEVICE,
 }
 
-USERS = "/run/systemd/users"
+SESSIONS = session_source()
 
 def active_users():
-    names = []
-    for fn in os.listdir(USERS):
-        if not fn.isdigit():
-            continue
-        user = state = None
-        try:
-            with open(os.path.join(USERS, fn)) as f:
-                for line in f:
-                    if line.startswith("NAME="):
-                        user = line[5:].strip()
-                    elif line.startswith("STATE="):
-                        state = line[6:].strip()
-        except FileNotFoundError:
-            continue
-        if user and state in ("active", "online"):
-            names.append(user)
-    names.sort()
-    return ",".join(names)
+    return ",".join(sorted(SESSIONS.active_users()))
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:

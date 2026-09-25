@@ -24,7 +24,7 @@ Operational detail and one-off sensor notes belong in `README.md` or a short com
 
 ## Pluggable service manager
 
-Anything that reads or controls a service goes through `service_manager()` in `mqtt_common.py` and its three methods: `is_active(name)`, `start(name)`, `stop(name)`. systemd (`SystemdServiceManager`) is the only backend we ship. Someone on OpenRC, runit, s6 or anything else must be able to plug in their own backend there without touching a collector. We do not write those backends; we keep the door obvious. Collectors never call `systemctl`, read cgroups, or talk D-Bus themselves. No backend setting or plugin loader until there is a second backend: the one function is the switch.
+Every systemd interaction goes through a small interface in `mqtt_common.py`: service state and control through `service_manager()` (`is_active(name)`, `start(name)`, `stop(name)`), service logs through its `follow_log(name)`, login sessions through `session_source()` (`active_users()`). systemd and logind are the only backends we ship. Someone on OpenRC, runit, s6 or anything else must be able to plug in their own backend there without touching a collector. We do not write those backends; we keep the door obvious. Collectors never call `systemctl`, `journalctl` or `loginctl`, read cgroups or `/run/systemd`, or talk D-Bus themselves. No backend setting or plugin loader until there is a second backend: each function is the switch.
 
 ## Pull requests
 
