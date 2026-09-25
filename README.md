@@ -22,7 +22,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 | `chia_recompute_server_processing_time.py` | recompute processing time (s, full precision, display 1 decimal) | `journalctl -u chia_recompute_server -f` |
 | `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |
 | `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
-| `lightdm_active.py` | binary: LightDM unit running | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl`) |
+| `lightdm_active.py` | switch: LightDM unit running; start/stop only with `LIGHTDM_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl` to read state) |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
 | `xmrig_status.py` | hashrate (H/s, 60s), reject ratio (%), mining switch, profitability factor (revenue/cost) | XMRig HTTP + MQTT inputs; remembers hashrate/W while paused |
 | `support/xmr_eur_price.py` | XMR/EUR spot (EUR) | held HTTPS to Kraken public ticker, 60 s |
@@ -67,6 +67,17 @@ session [success=1 default=ignore] pam_succeed_if.so quiet user ingroup sshfs
 
 If you sshfs as a user who is already on a seat, they were already in the list; the mount does not add a new name.
 
+## LightDM switch
+
+`lightdm_active.py` publishes a HA `switch` (`switch/lightdm_active_<host>/{config,state,set}`). State is the `lightdm.service` cgroup dir existing, checked each second. On connect it clears the retained discovery and state of the old `binary_sensor/lightdm_active_<host>` so HA drops that entity.
+
+`LIGHTDM_SWITCH_MODE` in `.env`:
+
+- `read_only` (default, also when unset or empty): HA requires a `command_topic`, so the switch has one, but commands are ignored (printed) and the real state is re-published, so the toggle snaps back.
+- `control`: `ON` runs `systemctl start lightdm.service`, `OFF` runs `systemctl stop lightdm.service`, prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. `OFF` ends any graphical session on that seat.
+
+Any other value exits.
+
 ## Run
 
 As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`.
@@ -87,6 +98,7 @@ HA_TOKEN=
 HA_ELECTRICITY_ENTITY=sensor.porssisahko_electricity_price
 ELECTRICITY_EUR_PER_KWH_TOPIC=
 ELECTRICITY_EUR_PER_KWH=
+LIGHTDM_SWITCH_MODE=read_only
 ```
 
 Matching `*.service` stubs: `ExecStart`, `WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Enable the ones you want as system units.
