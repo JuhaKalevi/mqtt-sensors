@@ -86,7 +86,7 @@ Any other value exits.
 1. **hwmon:** `temp1_input` (millidegrees C) of every `/sys/class/hwmon/hwmon*` named `drivetemp` (SATA, also behind SAS HBAs and some USB bridges) or `nvme`. This is preferred when present.
 2. **SAT fallback:** every `/sys/block/sd*` not already covered by a `drivetemp` hwmon (same SCSI device path), not `removable`, with non-zero size. The collector holds `/dev/sdX` open (`O_RDONLY|O_NONBLOCK`) and sends read-only ATA commands in-process with the `SG_IO` ioctl (stdlib `fcntl` + `ctypes`) wrapped in SCSI ATA PASS-THROUGH(16), falling back to (12). This works without `drivetemp` and on `usb-storage` bridges where `drivetemp` never attaches. Needs root (`CAP_SYS_RAWIO`), which every collector here has.
 
-SAT per sample: CHECK POWER MODE (`E5h`, non-data, `CK_COND` so the bridge returns the ATA registers). Only when the drive reports active/idle (`FFh`, `80h`–`83h`, `41h`) does it send SMART READ DATA (`B0h`/`D0h`) and publish raw byte 0 of attribute 194, else 190, if 1–99 °C. Standby (`00h`/`01h`) or anything else: nothing is sent and nothing is published, so HA keeps the last value. IDENTIFY DEVICE (`ECh`) is sent once per appearance, and only after the drive reported active, for the real ATA serial/model and the SMART support/enabled bits. A drive first seen in standby is identified when it next spins up for another reason; the collector never spins it up.
+SAT per sample: CHECK POWER MODE (`E5h`, non-data, `CK_COND` so the bridge returns the ATA registers; CDB flags byte `2Ch` as smartmontools sends it). Only when the drive reports active/idle (`FFh`, `80h`–`83h`, `41h`) does it send SMART READ DATA (`B0h`/`D0h`) and publish raw byte 0 of attribute 194, else 190, if 1–99 °C. Standby (`00h`/`01h`) or anything else: nothing is sent and nothing is published, so HA keeps the last value. IDENTIFY DEVICE (`ECh`) is sent once per appearance, and only after the drive reported active, for the real ATA serial/model and the SMART support/enabled bits. A drive first seen in standby is identified when it next spins up for another reason; the collector never spins it up.
 
 Ids: the ATA serial (and full ATA model) from `vpd_pg89` for `drivetemp`, or from IDENTIFY for SAT, so both paths give the same id. Then the SCSI `serial` / `vpd_pg80`, `wwid`, then for USB the enclosure's `idVendor` + `idProduct` + `serial` + LUN. Nothing stable: skipped; `sdX` is never used. NVMe uses the controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<id>_<host>`. USB drives get ` (USB)` in the HA name. `/sys/class/hwmon` and `/sys/block` are rescanned each sample (`device` links re-checked), so drives come and go, and a reused `hwmonN` / `sdX` is a new drive. A failed read skips that sample for that drive only. It exits only if there is no `drivetemp`/`nvme` hwmon and no candidate `sd*` disk.
 
@@ -102,7 +102,17 @@ hwmon_drive_temperature: sdd: unsupported: bridge returns no ATA registers (CHEC
 hwmon_drive_temperature: sde: skipped: removable or no media
 ```
 
-An unsupported drive is not retried until it disappears and comes back (or the service restarts).
+An unsupported drive is not retried until it disappears and comes back (or the service restarts). The reason lists both attempts, e.g. `ATA_16: … ; ATA_12: …`.
+
+`DRIVE_TEMPERATURE_DEBUG=1` (default off, read-only): for each drive on first contact, one line with the SCSI device path, USB driver (`uas` / `usb-storage`), `idVendor:idProduct`, whether `vpd_pg89` exists and `usb-storage.quirks`. Then one line per SG_IO attempt (probe and identification only, not per sample) with the CDB, ioctl errno, `status`, `masked_status`, `host_status`, `driver_status`, `sb_len_wr`, `resid`, `duration`, the sense bytes and the first 16 data bytes. Reading it:
+
+- `errno=EPERM`/`EACCES`: not root. `ENOTTY`/`EINVAL`: that device node does not take SG_IO.
+- `host=0x0003` (timeout) or other non-zero `host`: the bridge/USB link failed the command; nothing from the drive.
+- `status=0x02`, sense `72 05 20 00` / `70 00 05 … 20 00` (ILLEGAL REQUEST, invalid opcode) or `… 24 00` (invalid field in CDB): the bridge (or the kernel for `NO_ATA_1X` quirk devices) refuses that pass-through CDB. If both ATA_16 and ATA_12 do, the bridge has no usable SAT.
+- `status=0x02`, sense starting `72 01 00 1d` (descriptor) with `09 0c …` or `70 00 01 … 00 1d` (fixed): registers came back; the count byte is the power mode (`ff` active). If it still says unsupported, that is a bug here — report the line.
+- `status=0x00`, `sb_len_wr=0` for `E5h`: the command went through but the bridge ignored `CK_COND` and returned no registers. Common on cheap bridges. The power state cannot be read, so by default the drive is not read.
+
+`DRIVE_TEMPERATURE_IO_GATE=1` (default off) is for that last case. Instead of CHECK POWER MODE, the drive is read only when `/sys/block/sdX/stat` shows reads or writes completed since the previous sample (SG_IO pass-through is not counted there, so the collector's own commands never count). A drive that just did I/O is almost certainly spinning. Risk: if its spin-down time is shorter than `DRIVE_TEMPERATURE_INTERVAL`, it may have spun down after that I/O, and SMART READ DATA / IDENTIFY will spin it up again. Keep the interval well below the drive's spin-down time when using this, and accept that idle-but-spinning drives with no I/O show their last value. The kernel has no other view of a USB disk's spin state (`power/runtime_status` is host-side runtime PM, not the drive).
 
 `drivetemp` is optional now. Load it if you prefer the kernel path for internal SATA:
 
@@ -149,6 +159,8 @@ ELECTRICITY_EUR_PER_KWH_TOPIC=
 ELECTRICITY_EUR_PER_KWH=
 LIGHTDM_SWITCH_MODE=read_only
 DRIVE_TEMPERATURE_INTERVAL=60
+DRIVE_TEMPERATURE_DEBUG=
+DRIVE_TEMPERATURE_IO_GATE=
 ```
 
 Matching `*.service` stubs: `ExecStart`, `WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Enable the ones you want as system units.
