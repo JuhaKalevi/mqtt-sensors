@@ -1,5 +1,6 @@
 [Service]
-ExecStart=/root/mqtt-sensors/lightdm_active.py
+Environment=SWITCH_UNIT=%i
+ExecStart=/root/mqtt-sensors/systemd_unit_switch.py
 WorkingDirectory=/root/mqtt-sensors
 Restart=on-failure
 RestartSec=10

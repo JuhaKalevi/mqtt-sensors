@@ -22,7 +22,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 | `chia_recompute_server_processing_time.py` | recompute processing time (s, full precision, display 1 decimal) | `journalctl -u chia_recompute_server -f` |
 | `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |
 | `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
-| `lightdm_active.py` | switch: LightDM unit running; start/stop only with `LIGHTDM_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl` to read state) |
+| `systemd_unit_switch.py` (`systemd_unit_switch@<unit>.service`) | switch per systemd unit (LightDM, Ollama, …): unit running; start/stop only with `SWITCH_MODE_<UNIT>=control` | `/sys/fs/cgroup/system.slice/<unit>.service` (no `systemctl` to read state) |
 | `hwmon_drive_temperature.py` | per-drive temperature (°C): `drivetemp`/`nvme` hwmon, else in-process SAT (SG_IO) SMART for `sd*` incl. USB; drives reporting standby are not read | `/sys/class/hwmon` polled every 60 s (`DRIVE_TEMPERATURE_INTERVAL`); `temp1_input` fd held while the node exists |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
 | `xmrig_status.py` | hashrate (H/s, 60s), reject ratio (%), mining switch, profitability factor (revenue/cost) | XMRig HTTP + MQTT inputs; remembers hashrate/W while paused |
@@ -33,7 +33,7 @@ Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm ne
 
 Energy is `total_increasing` kWh integrated in RAM; HA expects it to start at 0. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2 s–5 s is normal — do not average. Harvester samples once per signage point (~every 9 s); a gap or a time climbing toward the signage window is the error signal.
 
-Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>`, `power_supply_<host>`, `hwmon_drive_temperature_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
+Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `<unit>_<host>` (one per switched systemd unit, e.g. `lightdm_<host>`, `ollama_<host>`), `power_supply_<host>`, `hwmon_drive_temperature_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
 
 ## loginctl active users
 
@@ -68,16 +68,43 @@ session [success=1 default=ignore] pam_succeed_if.so quiet user ingroup sshfs
 
 If you sshfs as a user who is already on a seat, they were already in the list; the mount does not add a new name.
 
-## LightDM switch
+## Systemd unit switch
 
-`lightdm_active.py` publishes a HA `switch` (`switch/lightdm_active_<host>/{config,state,set}`). State is the `lightdm.service` cgroup dir existing, checked each second. On connect it clears the retained discovery and state of the old `binary_sensor/lightdm_active_<host>` so HA drops that entity.
+`systemd_unit_switch.py` publishes one HA `switch` per systemd unit (`switch/<unit>_active_<host>/{config,state,set}`, availability `sensor/<unit>_<host>/availability`). It is run through the template unit `systemd_unit_switch@.service`; the instance name is the unit (`systemd_unit_switch@lightdm` watches `lightdm.service`, `systemd_unit_switch@ollama` watches `ollama.service`) and reaches the script as `Environment=SWITCH_UNIT=%i`. State is the unit's cgroup dir `/sys/fs/cgroup/system.slice/<unit>.service` existing, checked each second; `systemctl` is never spawned to read state. Only plain system services are supported (not user units, not template instances in their own sub-slice).
 
-`LIGHTDM_SWITCH_MODE` in `.env`:
+Per instance, `<UNIT>` is the unit name upper-cased with every non-alphanumeric mapped to `_` (`lightdm` → `LIGHTDM`, `ollama` → `OLLAMA`, `my-app` → `MY_APP`). The same mapping, lower-cased, is `<unit>` in object ids. In `.env`:
 
-- `read_only` (default, also when unset or empty): HA requires a `command_topic`, so the switch has one, but commands are ignored (printed) and the real state is re-published, so the toggle snaps back.
-- `control`: `ON` runs `systemctl start lightdm.service`, `OFF` runs `systemctl stop lightdm.service`, prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. `OFF` ends any graphical session on that seat.
+- `SWITCH_MODE_<UNIT>`:
+  - `read_only` (default, also when unset or empty): HA requires a `command_topic`, so the switch has one, but commands are ignored (printed) and the real state is re-published, so the toggle snaps back.
+  - `control`: `ON` runs `systemctl start <unit>.service`, `OFF` runs `systemctl stop <unit>.service`, prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. For LightDM, `OFF` ends any graphical session on that seat.
+  - Any other value exits.
+- `SWITCH_NAME_<UNIT>` (optional): readable name; the HA name is `<name> Active`. Unset, it is derived from the unit (`ollama` → `Ollama Active`, `my-app` → `My App Active`). Set `SWITCH_NAME_LIGHTDM=LightDM` to keep the old `LightDM Active` name.
 
-Any other value exits.
+Enable the instances you want (template installed like the other units):
+
+```
+cp /root/mqtt-sensors/systemd_unit_switch@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now systemd_unit_switch@lightdm systemd_unit_switch@ollama
+```
+
+### Upgrading a host from `lightdm_active`
+
+`lightdm_active.py` / `lightdm_active.service` are gone and `LIGHTDM_SWITCH_MODE` is no longer read (a leftover value is ignored, so the switch falls back to `read_only`). The LightDM entity keeps its unique_id and topics (`switch/lightdm_active_<host>/…`), so HA keeps the same entity; only its availability topic moved from `binary_sensor/lightdm_<host>/availability` to `sensor/lightdm_<host>/availability`. As root:
+
+```
+systemctl disable --now lightdm_active.service
+rm -f /etc/systemd/system/lightdm_active.service
+cd /root/mqtt-sensors && git pull
+sed -i 's/^LIGHTDM_SWITCH_MODE=/SWITCH_MODE_LIGHTDM=/' .env
+grep -q '^SWITCH_NAME_LIGHTDM=' .env || printf '\nSWITCH_NAME_LIGHTDM=LightDM\n' >> .env
+cp /root/mqtt-sensors/systemd_unit_switch@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now systemd_unit_switch@lightdm
+systemctl enable --now systemd_unit_switch@ollama
+```
+
+Adjust the `rm`/`cp` paths if the host links units from elsewhere (`systemctl cat lightdm_active` shows the path before removal). Optional cleanup of the stale retained availability message: `mosquitto_pub -r -n -t 'homeassistant/binary_sensor/lightdm_<host>/availability'` (with your broker credentials and `MQTT_PREFIX`). Only enable `@ollama` on hosts that have `ollama.service`; on others the switch just stays `OFF`.
 
 ## Drive temperature
 
@@ -157,7 +184,9 @@ HA_TOKEN=
 HA_ELECTRICITY_ENTITY=sensor.porssisahko_electricity_price
 ELECTRICITY_EUR_PER_KWH_TOPIC=
 ELECTRICITY_EUR_PER_KWH=
-LIGHTDM_SWITCH_MODE=read_only
+SWITCH_MODE_LIGHTDM=read_only
+SWITCH_NAME_LIGHTDM=LightDM
+SWITCH_MODE_OLLAMA=read_only
 DRIVE_TEMPERATURE_INTERVAL=60
 DRIVE_TEMPERATURE_DEBUG=
 ```
