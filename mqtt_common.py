@@ -93,13 +93,26 @@ def make_switch_on_message(tag, mode, state_topic, get_state, act):
         client.publish(state_topic, get_state(), retain=True)
     return on_message
 
-def systemd_unit_state(unit):
-    return "ON" if os.path.isdir(f"/sys/fs/cgroup/system.slice/{unit}") else "OFF"
+class SystemdServiceManager:
+    """Service manager backend. Contract: is_active(name) -> bool, start(name), stop(name); name is the bare service name ("lightdm", "ollama").
+    Collectors only use service_manager() and these three methods, never systemd directly. systemd is the only shipped backend.
+    Another init system (OpenRC, runit, s6, ...): add a class with the same three methods and return it from service_manager(); no collector changes."""
 
-def systemd_unit_command(unit, payload):
-    action = "start" if payload == "ON" else "stop"
-    rc = subprocess.run(["systemctl", action, unit]).returncode
-    print(f"{payload} -> systemctl {action} {unit} rc={rc}", flush=True)
+    def is_active(self, name):
+        return os.path.isdir(f"/sys/fs/cgroup/system.slice/{name}.service")
+
+    def start(self, name):
+        self._systemctl("start", name)
+
+    def stop(self, name):
+        self._systemctl("stop", name)
+
+    def _systemctl(self, action, name):
+        rc = subprocess.run(["systemctl", action, f"{name}.service"]).returncode
+        print(f"{'ON' if action == 'start' else 'OFF'} -> systemctl {action} {name}.service rc={rc}", flush=True)
+
+def service_manager():
+    return SystemdServiceManager()
 
 def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)

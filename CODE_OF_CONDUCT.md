@@ -22,6 +22,10 @@ Scripts assume their source works: XMRig HTTP with the token you set, retained M
 
 Operational detail and one-off sensor notes belong in `README.md` or a short commit message. Security reasoning belongs in `SECURITY.md`. Do not grow `AGENT.md` into a novel. Do not invent abstractions (`Sensor` classes, shared supervisors) to avoid repeating a small script. A generalisation may cross that line only if it is built so something else can easily leverage it later: a reusable building block in `mqtt_common.py` (like the switch and systemd unit helpers), not a merged collector. Each source still keeps its own script and unit.
 
+## Pluggable service manager
+
+Anything that reads or controls a service goes through `service_manager()` in `mqtt_common.py` and its three methods: `is_active(name)`, `start(name)`, `stop(name)`. systemd (`SystemdServiceManager`) is the only backend we ship. Someone on OpenRC, runit, s6 or anything else must be able to plug in their own backend there without touching a collector. We do not write those backends; we keep the door obvious. Collectors never call `systemctl`, read cgroups, or talk D-Bus themselves. No backend setting or plugin loader until there is a second backend: the one function is the switch.
+
 ## Pull requests
 
 Match the style of the neighbor script. Prefer deleting lines. If a change needs a long apology in the description, it is probably the wrong change for this repo.

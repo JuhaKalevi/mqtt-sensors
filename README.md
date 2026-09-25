@@ -80,13 +80,19 @@ Each has its own opt-in in `.env`, `LIGHTDM_SWITCH_MODE` and `OLLAMA_SWITCH_MODE
 - `read_only` (default, also when unset or empty): HA requires a `command_topic`, so the switch has one, but commands are ignored (printed) and the real state is re-published, so the toggle snaps back.
 - `control`: `ON` runs `systemctl start <unit>`, `OFF` runs `systemctl stop <unit>` (`lightdm.service` / `ollama.service`), prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. For LightDM, `OFF` ends any graphical session on that seat.
 
-Any other value exits. The cgroup read, the mode check, and the switch discovery/command handling are small helpers in `mqtt_common.py`; each script only names its unit, entity, and setting.
+Any other value exits. The mode check and the switch discovery/command handling are small helpers in `mqtt_common.py`, and service state/start/stop go through `service_manager()` (see Other init systems); each script only names its service, entity, and setting.
 
 ```
 systemctl enable --now /root/mqtt-sensors/ollama_active.service
 ```
 
 Upgrading a LightDM host: nothing changes for HA or `.env` (same entity, topics, and `LIGHTDM_SWITCH_MODE`). `cd /root/mqtt-sensors && git pull && systemctl restart lightdm_active` picks up the new `mqtt_common.py`.
+
+## Other init systems
+
+Service state and start/stop go through `service_manager()` in `mqtt_common.py`, whose object has `is_active(name)`, `start(name)`, `stop(name)` (bare name like `lightdm`). `SystemdServiceManager` (cgroup dir read, `systemctl start|stop`) is the only backend shipped. For OpenRC, runit, s6 or another init, write a class with those three methods and return it from `service_manager()`; the collectors stay untouched. That backend is not provided here.
+
+The `*.service` files are systemd units; other init systems need their own service definitions. `chia_recompute_server_processing_time.py` follows `journalctl -u chia_recompute_server` and `loginctl_active_users.py` reads logind's `/run/systemd/users` (also written by elogind); those are log and session sources, not service control, so they are outside the interface.
 
 ## Drive temperature
 

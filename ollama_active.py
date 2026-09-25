@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Ollama unit active → MQTT + Home Assistant switch (cgroup; systemctl start/stop only in control mode)."""
+"""Ollama service active → MQTT + Home Assistant switch (service_manager(); start/stop only in control mode)."""
 import json, time
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device, create_client, make_switch_discovery,
-    switch_mode, make_switch_on_message, systemd_unit_state, systemd_unit_command
+    switch_mode, make_switch_on_message, service_manager
 )
 
-UNIT = "ollama.service"
+SERVICE = "ollama"
 HOSTNAME = get_hostname()
 DEVICE, DEVICE_ID = make_device(HOSTNAME)
 CLIENT_ID = f"ollama-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+SERVICES = service_manager()
 MODE = switch_mode("OLLAMA_SWITCH_MODE")
 
 OBJ = f"ollama_active_{HOSTNAME}"
@@ -22,10 +23,10 @@ CONFIG = f"{PREFIX}/switch/{OBJ}/config"
 DISCOVERY = make_switch_discovery("Ollama Active", STATE, CMD, AVAIL_T, OBJ, DEVICE)
 
 def state():
-    return systemd_unit_state(UNIT)
+    return "ON" if SERVICES.is_active(SERVICE) else "OFF"
 
 def act(payload):
-    systemd_unit_command(UNIT, payload)
+    (SERVICES.start if payload == "ON" else SERVICES.stop)(SERVICE)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
