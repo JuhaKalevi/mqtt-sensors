@@ -14,7 +14,6 @@ settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 INTERVAL = float(os.getenv("DRIVE_TEMPERATURE_INTERVAL") or "60")
 DEBUG = os.getenv("DRIVE_TEMPERATURE_DEBUG") == "1"
-IO_GATE = os.getenv("DRIVE_TEMPERATURE_IO_GATE") == "1"
 AVAIL_T = f"{PREFIX}/sensor/hwmon_drive_temperature_{HOSTNAME}/availability"
 ROOT = Path("/sys/class/hwmon")
 BLOCK = Path("/sys/block")
@@ -249,20 +248,25 @@ def sat(fd, op, command, data_in=False, feature=0, lba_mid=0, lba_high=0, dbg=No
         return f"ATA command 0x{command:02x} aborted (error 0x{regs['error']:02x})", regs, None
     return None, regs, buf.raw if data_in else None
 
+def ops(s):
+    return [s["op"]] if s["op"] else [0x85, 0xA1]
+
+def op_name(op):
+    return f"ATA_{16 if op == 0x85 else 12}"
+
 def power_mode(s, dbg=None):
-    errs, gate_op = [], None
-    for op in ([s["op"]] if s["op"] else [0x85, 0xA1]):
+    errs = []
+    for op in ops(s):
         err, regs, _ = sat(s["fd"], op, 0xE5, dbg=dbg)
         if not err and not regs:
-            err, gate_op = "no ATA registers returned for CHECK POWER MODE", gate_op or op
+            err = "bridge returns no ATA registers"
         elif not err and not regs["status"] & 0x40 and regs["count"] not in ACTIVE:
-            err = f"ATA registers look invalid (status 0x{regs['status']:02x}, count 0x{regs['count']:02x})"
-            gate_op = gate_op or op
+            err = f"invalid ATA registers, status 0x{regs['status']:02x} count 0x{regs['count']:02x}"
         if not err:
             s["op"] = op
-            return regs["count"], None, None
-        errs.append(f"ATA_{16 if op == 0x85 else 12}: {err}")
-    return None, "; ".join(errs), gate_op
+            return regs["count"], None
+        errs.append(f"{op_name(op)}: {err}")
+    return None, "; ".join(errs)
 
 def smart_temp(data):
     attrs = {data[i]: data[i + 5] for i in range(2, 362, 12) if data[i]}
@@ -272,30 +276,39 @@ def smart_temp(data):
             return t
     return None
 
-def read_smart(s, dbg=None):
-    err, _, data = sat(s["fd"], s["op"], 0xB0, True, 0xD0, 0x4F, 0xC2, dbg)
-    return None if err else smart_temp(data)
+def read_smart(s, op, dbg=None):
+    err, _, data = sat(s["fd"], op, 0xB0, True, 0xD0, 0x4F, 0xC2, dbg)
+    return err, None if err else smart_temp(data)
 
 def setup_sat(s):
-    err, _, ident = sat(s["fd"], s["op"], 0xEC, True, dbg=s["dbg"])
-    model = serial = ""
-    if not err:
-        if ident[1] & 0x80:
-            return "IDENTIFY: not an ATA device"
-        if not ident[164] & 0x01:
-            return "SMART not supported"
-        if not ident[170] & 0x01:
-            return "SMART disabled"
-        model, serial = ata_ident(ident)
-    if read_smart(s, s["dbg"]) is None:
-        return err or "no SMART temperature (attribute 194/190)"
+    errs = []
+    for op in ops(s):
+        err, _, ident = sat(s["fd"], op, 0xEC, True, dbg=s["dbg"])
+        model = serial = ""
+        if not err:
+            if ident[1] & 0x80:
+                return "IDENTIFY: not an ATA device"
+            if not ident[164] & 0x01:
+                return "SMART not supported"
+            if not ident[170] & 0x01:
+                return "SMART disabled"
+            model, serial = ata_ident(ident)
+        smart_err, t = read_smart(s, op, s["dbg"])
+        if not smart_err:
+            break
+        errs.append(f"{op_name(op)}: {smart_err}")
+    else:
+        return "; ".join(errs)
+    if t is None:
+        return "no SMART temperature (attribute 194/190)"
+    s["op"] = op
     ids = identity(s["dev"], model, serial)
     if not ids:
         return "no stable serial, wwid or USB serial"
     s.update(entry(ids))
     client.publish(s["config"], json.dumps(s["discovery"]), retain=True)
     s["mode"] = "sat"
-    log(f"{s['name']}: reading via SAT ATA_{16 if s['op'] == 0x85 else 12}, {s['label']}")
+    log(f"{s['name']}: reading via SAT {op_name(s['op'])}, {s['label']}")
     return None
 
 def unsupported(s, reason):
@@ -303,37 +316,22 @@ def unsupported(s, reason):
     os.close(s["fd"])
     log(f"{s['name']}: unsupported: {reason}")
 
-def io_count(s):
-    f = read_opt(BLOCK / s["name"] / "stat").split()
-    return f"{f[0]}/{f[4]}" if len(f) > 4 else ""
-
 def poll_sat(s):
-    if s.get("gate"):
-        io, s["io"] = s["io"], io_count(s)
-        if io == s["io"]:
-            return
-    else:
-        mode, err, gate_op = power_mode(s, s["dbg"] if s["mode"] == "probe" else None)
-        if err:
-            if s["mode"] == "sat":
-                return
-            if IO_GATE and gate_op:
-                s["op"], s["gate"], s["io"] = gate_op, True, io_count(s)
-                log(f"{s['name']}: {err}; DRIVE_TEMPERATURE_IO_GATE=1, reading only after block I/O")
-                return
-            unsupported(s, err)
-            return
-        if mode not in ACTIVE:
-            if s["mode"] == "probe":
-                s["mode"] = "standby"
-                log(f"{s['name']}: in standby (power mode 0x{mode:02x}), not reading until it spins up")
-            return
+    mode, err = power_mode(s, s["dbg"] if s["mode"] == "probe" else None)
+    if not err and mode not in ACTIVE:
+        if s["mode"] == "probe":
+            s["mode"] = "standby"
+            log(f"{s['name']}: in standby (power mode 0x{mode:02x}), not reading until it spins up")
+        return
     if s["mode"] != "sat":
-        err = setup_sat(s)
-        if err:
-            unsupported(s, err)
+        setup_err = setup_sat(s)
+        if setup_err:
+            unsupported(s, setup_err)
             return
-    t = read_smart(s)
+    if err and not s["unknown"]:
+        s["unknown"] = True
+        log(f"{s['name']}: power mode unknown ({err}), reading anyway; may keep drive spinning")
+    _, t = read_smart(s, s["op"])
     if t is not None:
         client.publish(s["state"], "%.1f" % t, retain=True)
 
@@ -341,7 +339,7 @@ def candidate(b):
     return read_opt(b / "removable") != "1" and read_opt(b / "size") not in ("", "0")
 
 def new_sat(b, dev):
-    s = {"name": b.name, "dev": dev, "op": None, "mode": "probe", "dbg": None}
+    s = {"name": b.name, "dev": dev, "op": None, "mode": "probe", "dbg": None, "unknown": False}
     if DEBUG:
         s["dbg"] = f"{b.name} [{usb_info(dev)}]"
         quirks = read_opt(Path("/sys/module/usb_storage/parameters/quirks")) or "-"
@@ -392,7 +390,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 hwmons = [hw for hw in ROOT.iterdir() if read_opt(hw / "name") in ("drivetemp", "nvme")]
 disks = [b for b in BLOCK.glob("sd*") if candidate(b)]
-log(f"host={HOSTNAME} interval={INTERVAL:g}s drivetemp/nvme hwmon={len(hwmons)} scsi disks={len(disks)} debug={int(DEBUG)} io_gate={int(IO_GATE)}")
+log(f"host={HOSTNAME} interval={INTERVAL:g}s drivetemp/nvme hwmon={len(hwmons)} scsi disks={len(disks)} debug={int(DEBUG)}")
 if not hwmons and not disks:
     sys.exit("hwmon_drive_temperature: no drivetemp or nvme hwmon and no SCSI disks; for SATA try: modprobe drivetemp")
 
