@@ -23,7 +23,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 | `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |
 | `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
 | `lightdm_active.py` | switch: LightDM unit running; start/stop only with `LIGHTDM_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl` to read state) |
-| `hwmon_drive_temperature.py` | per-drive temperature (°C), SATA/SAS (`drivetemp`) and NVMe | `/sys/class/hwmon` polled every 60 s (`DRIVE_TEMPERATURE_INTERVAL`); `temp1_input` fd held while the node exists |
+| `hwmon_drive_temperature.py` | per-drive temperature (°C), SATA incl. USB via SAT (`drivetemp`) and NVMe | `/sys/class/hwmon` polled every 60 s (`DRIVE_TEMPERATURE_INTERVAL`); `temp1_input` fd held while the node exists |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
 | `xmrig_status.py` | hashrate (H/s, 60s), reject ratio (%), mining switch, profitability factor (revenue/cost) | XMRig HTTP + MQTT inputs; remembers hashrate/W while paused |
 | `support/xmr_eur_price.py` | XMR/EUR spot (EUR) | held HTTPS to Kraken public ticker, 60 s |
@@ -81,9 +81,9 @@ Any other value exits.
 
 ## Drive temperature
 
-`hwmon_drive_temperature.py` does not run `smartctl` or anything else. It reads `temp1_input` (millidegrees C) from every `/sys/class/hwmon/hwmon*` whose `name` is `drivetemp` (SATA/SAS) or `nvme`, and publishes one `°C` / `temperature` sensor per drive on the host HA device. The drive comes from the hwmon `device` link: the SCSI device's `model` + serial (`vpd_pg80`, else `wwid`), or the NVMe controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<serial>_<host>`, so they survive `sdX` / `nvmeN` reshuffles. The class dir is rescanned each sample; a new drive gets discovery, a vanished one has its retained discovery cleared. A failed read (drive asleep, `ENODATA`) skips that sample. With no `drivetemp` or `nvme` hwmon at start it exits.
+`hwmon_drive_temperature.py` does not run `smartctl` or anything else. It reads `temp1_input` (millidegrees C) from every `/sys/class/hwmon/hwmon*` whose `name` is `drivetemp` (SATA, also behind SAS HBAs and USB bridges) or `nvme`, and publishes one `°C` / `temperature` sensor per drive on the host HA device. The drive comes from the hwmon `device` link. For `drivetemp` the id is the first of: the disk's own ATA serial (and full ATA model) from `vpd_pg89` (the ATA IDENTIFY data drivetemp itself requires), the SCSI `serial` / `vpd_pg80`, `wwid`, then for USB the enclosure's `idVendor` + `idProduct` + `serial` + LUN. A drive with none of these is skipped with one printed line; `sdX` is never used. NVMe uses the controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<id>_<host>`, so they survive `sdX` / `nvmeN` reshuffles. USB drives get ` (USB)` in the HA name. The class dir is rescanned each sample and each hwmon's `device` link re-checked, so a new drive gets discovery, a vanished one has its retained discovery cleared, and a reused `hwmonN` number is treated as a new drive. A failed read (drive asleep, `ENODATA`) skips that sample. With no `drivetemp` or `nvme` hwmon at start it exits.
 
-NVMe needs nothing. SATA/SAS needs the `drivetemp` module:
+NVMe needs nothing. SATA needs the `drivetemp` module:
 
 ```
 modprobe drivetemp
@@ -91,6 +91,19 @@ echo drivetemp > /etc/modules-load.d/drivetemp.conf
 ```
 
 Standby: the kernel docs ([drivetemp](https://docs.kernel.org/hwmon/drivetemp.html), usage note) say reading the temperature may reset the spin-down timer on some drives (seen on WD120EFAX; `hddtemp`/`smartd` do the same). On that drive a read in standby still works and does not spin it up; other drives are unknown. The workaround is to read at intervals longer than twice the spin-down time, otherwise affected drives never spin down. Default is 60 s; set `DRIVE_TEMPERATURE_INTERVAL` (seconds) above twice your spin-down time if drives should sleep.
+
+### USB drives
+
+`drivetemp` binds to any SCSI disk whose SAT layer supplies VPD page 0x89 (ATA Information) with SATA IDENTIFY data, then reads the temperature with ATA pass-through (`ATA_16`, SCT status or SMART) — `drivetemp_identify_sata()` in [drivers/hwmon/drivetemp.c](https://github.com/torvalds/linux/blob/master/drivers/hwmon/drivetemp.c). So a USB-SATA bridge works when:
+
+- it is on `uas`. `usb-storage` (BOT) sets `skip_vpd_pages` ([scsiglue.c](https://github.com/torvalds/linux/blob/master/drivers/usb/storage/scsiglue.c), "Some devices don't handle VPD pages correctly"), so page 0x89 is never read and drivetemp does not attach. The kernel skips it because some bridges crash on VPD; forcing it is not covered here.
+- the bridge implements SAT page 0x89 and passes `ATA_16` through. Bridges with the `NO_ATA_1X` quirk (`t` in `usb-storage.quirks`; ADATA CH94, Initio INIC-3069, PNY Elite, VIA VL711 in [unusual_uas.h](https://github.com/torvalds/linux/blob/master/drivers/usb/storage/unusual_uas.h)) have pass-through rejected by the kernel, so no hwmon.
+
+If `drivetemp` is loaded and there is no `drivetemp` hwmon for a USB disk, that bridge does not do SAT pass-through under Linux; nothing in this repo can fix it. Adding the `u` (ignore UAS) quirk makes it worse, not better.
+
+USB-NVMe enclosures (JMicron JMS583, Realtek RTL9210, ASMedia ASM236x) show up as SCSI disks, not NVMe, so there is no `nvme` hwmon. They also are not SATA, so `drivetemp` finds no SATA IDENTIFY and does not bind. `smartctl` reaches them only with vendor-specific pass-through (`-d sntjmicron`, `-d sntrealtek`, `-d sntasmedia`; e.g. `sntrealtek` arrived in smartmontools [7.2](https://github.com/smartmontools/smartmontools/releases/tag/RELEASE_7_2)), not SAT. Expect no temperature. Dual SATA/NVMe enclosures with a SATA M.2 inside behave like a USB-SATA bridge.
+
+No `smartctl -d sat` fallback: it would be a subprocess per sample running as root, and a new package, which AGENT.md and SECURITY.md rule out. It also sends the same SAT pass-through `drivetemp` uses, so a bridge that blocks one blocks the other. The USB-NVMe vendor pass-through is the only real gap.
 
 ## Run
 

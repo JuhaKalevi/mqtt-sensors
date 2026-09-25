@@ -49,7 +49,7 @@ Other measurement types: `make_sensor_discovery(...)` with the HA unit / device_
 - `loginctl_active_users.service` — `/root/mqtt-sensors`
 - `lightdm_active.py` — cgroup dir for `lightdm.service` → MQTT switch ON/OFF; clears the old binary_sensor discovery; `LIGHTDM_SWITCH_MODE=control` starts/stops the unit
 - `lightdm_active.service` — `/root/mqtt-sensors`
-- `hwmon_drive_temperature.py` — every `/sys/class/hwmon` node named `drivetemp` or `nvme`; `temp1_input` fd held while present, rescan each sample, clears discovery on remove; unique_id from drive serial (`vpd_pg80`/`wwid`, NVMe `serial`), never `sdX`; exits if none (`modprobe drivetemp`)
+- `hwmon_drive_temperature.py` — every `/sys/class/hwmon` node named `drivetemp` or `nvme`; `temp1_input` fd held while present, rescan each sample, clears discovery on remove; re-checks each hwmon `device` link per sample (hwmon number reuse); unique_id from the ATA serial in `vpd_pg89`, then `serial`/`vpd_pg80`, `wwid`, USB `idVendor`+`idProduct`+`serial`+LUN (NVMe `serial`), else skip with one print, never `sdX`; `(USB)` in the name; exits if none (`modprobe drivetemp`)
 - `hwmon_drive_temperature.service` — `/root/mqtt-sensors`
 - `power_supply_battery.py` — every `/sys/class/power_supply` node with `type=Battery` and `capacity`; rescans the class dir each second (add/remove), holds `capacity` fds while present, clears MQTT discovery on remove; `scope=System` stays on the host HA device, anything else gets its own HA device with `via_device`
 - `power_supply_battery.service` — `/root/mqtt-sensors`

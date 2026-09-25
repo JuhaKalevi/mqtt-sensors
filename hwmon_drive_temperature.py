@@ -16,6 +16,7 @@ INTERVAL = float(os.getenv("DRIVE_TEMPERATURE_INTERVAL") or "60")
 AVAIL_T = f"{PREFIX}/sensor/hwmon_drive_temperature_{HOSTNAME}/availability"
 ROOT = Path("/sys/class/hwmon")
 drives = {}
+skipped = {}
 
 def read_opt(path):
     try:
@@ -23,35 +24,61 @@ def read_opt(path):
     except OSError:
         return ""
 
-def identity(hw):
-    dev = (hw / "device").resolve()
-    model = read_opt(dev / "model")
-    serial = read_opt(dev / "serial")
-    if not serial:
-        try:
-            serial = (dev / "vpd_pg80").read_bytes()[4:].decode(errors="ignore").strip()
-        except OSError:
-            serial = ""
+def read_bin(path):
+    try:
+        return path.read_bytes()
+    except OSError:
+        return b""
+
+def text(b):
+    return "".join(c for c in b.decode("ascii", "ignore") if c.isprintable()).strip()
+
+def ata_string(b):
+    return text(bytes(b[i ^ 1] for i in range(len(b) & ~1)))
+
+def usb_parent(dev):
+    for p in dev.parents:
+        if (p / "idVendor").is_file():
+            return p
+    return None
+
+def identity(dev):
+    usb = usb_parent(dev)
+    pg89 = read_bin(dev / "vpd_pg89")
+    model = ata_string(pg89[114:154]) if len(pg89) >= 572 else ""
+    serial = ata_string(pg89[80:100]) if len(pg89) >= 572 else ""
+    model = model or read_opt(dev / "model")
+    serial = serial or read_opt(dev / "serial") or text(read_bin(dev / "vpd_pg80")[4:])
     ident = serial or read_opt(dev / "wwid")
+    if not ident and usb:
+        usb_serial = read_opt(usb / "serial")
+        if usb_serial:
+            lun = dev.name.split(":")[-1]
+            ident = f"usb {read_opt(usb / 'idVendor')} {read_opt(usb / 'idProduct')} {usb_serial} {lun}"
     if not ident:
         return None
-    return model or "Drive", serial, re.sub(r"[^a-z0-9]+", "_", ident.lower()).strip("_")
+    return model or "Drive", serial, re.sub(r"[^a-z0-9]+", "_", ident.lower()).strip("_"), usb is not None
 
-def open_drive(hw):
+def open_drive(hw, dev):
     if read_opt(hw / "name") not in ("drivetemp", "nvme"):
         return None
-    ids = identity(hw)
+    ids = identity(dev)
     if not ids:
+        if skipped.get(hw.name) != dev:
+            skipped[hw.name] = dev
+            print(f"hwmon_drive_temperature: skipping {hw.name} ({dev}): no stable serial, wwid or USB serial", flush=True)
         return None
     try:
         f = open(hw / "temp1_input")
     except OSError:
         return None
-    model, serial, ident = ids
+    model, serial, ident, usb = ids
     obj = f"hwmon_drive_temperature_{ident}_{HOSTNAME}"
     state = f"{PREFIX}/sensor/{obj}/state"
-    name = f"{model} {serial} Temperature" if serial else f"{model} Temperature"
+    name = f"{model} {serial}" if serial else model
+    name = f"{name} Temperature (USB)" if usb else f"{name} Temperature"
     return {
+        "dev": dev,
         "fd": f,
         "state": state,
         "config": f"{PREFIX}/sensor/{obj}/config",
@@ -75,9 +102,12 @@ def sync_drives():
     present = set()
     for hw in sorted(ROOT.iterdir()):
         present.add(hw.name)
+        dev = (hw / "device").resolve()
         if hw.name in drives:
-            continue
-        d = open_drive(hw)
+            if drives[hw.name]["dev"] == dev:
+                continue
+            drop_drive(hw.name)
+        d = open_drive(hw, dev)
         if not d:
             continue
         drives[hw.name] = d
