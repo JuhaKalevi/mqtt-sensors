@@ -135,6 +135,14 @@ Known not to work:
 - USB sticks and card readers (`removable=1`) are skipped.
 - A drive put into SLEEP (`hdparm -Y`), not standby, cannot answer CHECK POWER MODE, so it counts as unknown and the SMART read will wake it (or fail).
 
+When a USB SAT temperature read fails while the block device uses `uas`, the collector logs one suggestion per VID:PID per process start, for example:
+
+```
+usb-storage quirk suggested: 174c:55aa:u
+```
+
+The collector only reads sysfs and does not apply the quirk. An administrator can apply it with a modprobe configuration such as `options usb-storage quirks=174c:55aa:u`, or with `usb-storage.quirks=174c:55aa:u` on the kernel command line when `usb-storage` is built in. It takes effect on the next probe (replug or reboot), applies to every enclosure with that VID:PID, and `/dev/sdX` names may change.
+
 Why not `smartctl -d sat`: a root subprocess per sample and a new package (AGENT.md, SECURITY.md), and it would send the same commands.
 
 ## Run
