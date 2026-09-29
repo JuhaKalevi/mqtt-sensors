@@ -23,6 +23,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 | `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |
 | `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
 | `lightdm_active.py` | switch: LightDM unit running; start/stop only with `LIGHTDM_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl` to read state) |
+| `ollama_active.py` | switch: Ollama unit running; start/stop only with `OLLAMA_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/ollama.service` (no `systemctl` to read state) |
 | `hwmon_drive_temperature.py` | per-drive temperature (°C): `drivetemp`/`nvme` hwmon, else in-process SAT (SG_IO) SMART for `sd*` incl. USB; drives reporting standby are not read | `/sys/class/hwmon` polled every 60 s (`DRIVE_TEMPERATURE_INTERVAL`); `temp1_input` fd held while the node exists |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
 | `xmrig_status.py` | hashrate (H/s, 60s), reject ratio (%), mining switch, profitability factor (revenue/cost) | XMRig HTTP + MQTT inputs; remembers hashrate/W while paused |
@@ -33,7 +34,7 @@ Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm ne
 
 Energy is `total_increasing` kWh integrated in RAM; HA expects it to start at 0. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2 s–5 s is normal — do not average. Harvester samples once per signage point (~every 9 s); a gap or a time climbing toward the signage window is the error signal.
 
-Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>`, `power_supply_<host>`, `hwmon_drive_temperature_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
+Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>` (under `binary_sensor/`, kept from before it became a switch), `ollama_<host>`, `power_supply_<host>`, `hwmon_drive_temperature_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`.
 
 ## loginctl active users
 
@@ -68,16 +69,33 @@ session [success=1 default=ignore] pam_succeed_if.so quiet user ingroup sshfs
 
 If you sshfs as a user who is already on a seat, they were already in the list; the mount does not add a new name.
 
-## LightDM switch
+## Unit switches (LightDM, Ollama)
 
 `lightdm_active.py` publishes a HA `switch` (`switch/lightdm_active_<host>/{config,state,set}`). State is the `lightdm.service` cgroup dir existing, checked each second. On connect it clears the retained discovery and state of the old `binary_sensor/lightdm_active_<host>` so HA drops that entity.
 
-`LIGHTDM_SWITCH_MODE` in `.env`:
+`ollama_active.py` does the same for `ollama.service`: `switch/ollama_active_<host>/{config,state,set}`, HA name `Ollama Active`, availability `sensor/ollama_<host>/availability`. Enable it only on hosts that have `ollama.service` as a system unit.
+
+Each has its own opt-in in `.env`, `LIGHTDM_SWITCH_MODE` and `OLLAMA_SWITCH_MODE`:
 
 - `read_only` (default, also when unset or empty): HA requires a `command_topic`, so the switch has one, but commands are ignored (printed) and the real state is re-published, so the toggle snaps back.
-- `control`: `ON` runs `systemctl start lightdm.service`, `OFF` runs `systemctl stop lightdm.service`, prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. `OFF` ends any graphical session on that seat.
+- `control`: `ON` runs `systemctl start <unit>`, `OFF` runs `systemctl stop <unit>` (`lightdm.service` / `ollama.service`), prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. For LightDM, `OFF` ends any graphical session on that seat.
 
-Any other value exits.
+Any other value exits. The mode check and the switch discovery/command handling are small helpers in `mqtt_common.py`, and service state/start/stop go through `service_manager()` (see Other init systems); each script only names its service, entity, and setting.
+
+```
+systemctl enable --now /root/mqtt-sensors/ollama_active.service
+```
+
+Upgrading a LightDM host: nothing changes for HA or `.env` (same entity, topics, and `LIGHTDM_SWITCH_MODE`). `cd /root/mqtt-sensors && git pull && systemctl restart lightdm_active` picks up the new `mqtt_common.py`.
+
+## Other init systems
+
+Every systemd interaction goes through an interface in `mqtt_common.py`; collectors never call systemd tools or read its files directly:
+
+- `service_manager()`: `is_active(name)`, `start(name)`, `stop(name)`, `follow_log(name)` (context manager yielding new log lines). `name` is the bare service name (`lightdm`, `ollama`, `chia_recompute_server`). Shipped backend `SystemdServiceManager`: cgroup dir read, `systemctl start|stop`, `journalctl -u <name> -f -n 0 -o cat`. Used by `lightdm_active.py`, `ollama_active.py`, `chia_recompute_server_processing_time.py`.
+- `session_source()`: `active_users()` (names with an `active` or `online` session). Shipped backend `LogindSessionSource`: `/run/systemd/users`, which elogind also writes, so elogind hosts need nothing. Used by `loginctl_active_users.py`.
+
+For OpenRC, runit, s6 or another init, write a class with the same methods and return it from that function; the collectors stay untouched. Those backends are not provided here. The `*.service` files are systemd units; other init systems need their own service definitions.
 
 ## Drive temperature
 
@@ -158,6 +176,7 @@ HA_ELECTRICITY_ENTITY=sensor.porssisahko_electricity_price
 ELECTRICITY_EUR_PER_KWH_TOPIC=
 ELECTRICITY_EUR_PER_KWH=
 LIGHTDM_SWITCH_MODE=read_only
+OLLAMA_SWITCH_MODE=read_only
 DRIVE_TEMPERATURE_INTERVAL=60
 DRIVE_TEMPERATURE_DEBUG=
 ```
