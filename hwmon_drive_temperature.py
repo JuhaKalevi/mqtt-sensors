@@ -23,6 +23,8 @@ ACTIVE = (0x41, 0x80, 0x81, 0x82, 0x83, 0xFF)
 drives = {}
 sat_drives = {}
 skipped = {}
+quirk_suggestions = set()
+collecting_quirks = True
 
 class SgIoHdr(ctypes.Structure):
     _fields_ = [
@@ -199,15 +201,34 @@ def ata_regs(sb):
         return {"error": sb[3], "count": sb[6], "status": sb[4]}
     return None
 
-def usb_info(dev):
-    drv, usb = "-", usb_parent(dev)
+def usb_driver(dev):
     for p in dev.parents:
         if (p / "bInterfaceNumber").is_file():
-            drv = os.path.basename(os.path.realpath(p / "driver"))
-            break
+            return os.path.basename(os.path.realpath(p / "driver"))
+    return "-"
+
+def usb_info(dev):
+    drv, usb = usb_driver(dev), usb_parent(dev)
     if not usb:
         return drv
     return f"{drv} {read_opt(usb / 'idVendor')}:{read_opt(usb / 'idProduct')}"
+
+def suggest_quirk(s):
+    if not collecting_quirks or usb_driver(s["dev"]) != "uas":
+        return
+    for p in s["dev"].parents:
+        vid = read_opt(p / "idVendor")
+        pid = read_opt(p / "idProduct")
+        if not vid or not pid:
+            continue
+        quirk_suggestions.add(f"{vid.lower()}:{pid.lower()}")
+        return
+
+def log_quirk_suggestions():
+    if not quirk_suggestions:
+        return
+    listed = ",".join(f"{key}:u" for key in sorted(quirk_suggestions))
+    log(f"usb-storage quirks suggested: {listed}")
 
 def sat(fd, op, command, data_in=False, feature=0, lba_mid=0, lba_high=0, dbg=None):
     c = cdb(op, data_in, command, feature, lba_mid, lba_high)
@@ -278,6 +299,8 @@ def smart_temp(data):
 
 def read_smart(s, op, dbg=None):
     err, _, data = sat(s["fd"], op, 0xB0, True, 0xD0, 0x4F, 0xC2, dbg)
+    if err:
+        suggest_quirk(s)
     return err, None if err else smart_temp(data)
 
 def setup_sat(s):
@@ -410,6 +433,9 @@ try:
                 continue
             client.publish(d["state"], "%.1f" % (val / 1000.0), retain=True)
         sync_sat()
+        if collecting_quirks:
+            log_quirk_suggestions()
+            collecting_quirks = False
         time.sleep(INTERVAL)
 except KeyboardInterrupt:
     pass
