@@ -12,9 +12,9 @@ Run from anywhere. The scripts `chdir` to the repo root so `.env` loads the same
 
 ## CPU
 
-`cpu_package_power.py` holds one `powershell.exe` process that prints LibreHardwareMonitor’s WMI sensor `CPU Package` (watts) once a second. Energy is watts × dt in RAM, published as kWh, same units as the RAPL collector.
+`cpu_package_power.py` polls LibreHardwareMonitor’s HTTP server once a second (`GET /data.json`). `LHM_URL` is the server origin (`http://host:port`) and is required. The Power sensor is `CPU Package`, or `Package` on an AMD CPU (`RawValue`, watts). Energy is watts × dt in RAM, published as kWh, same units as the RAPL collector.
 
-Prerequisite: LibreHardwareMonitor running with the WMI provider enabled (`root/LibreHardwareMonitor`, sensor name `CPU Package`). Not PDH. Not an MSR driver in this repo.
+Prerequisite: LibreHardwareMonitor running with the remote web server enabled. Not WMI. Not PDH. Not an MSR driver in this repo.
 
 ```
 python windows/cpu_package_power.py
