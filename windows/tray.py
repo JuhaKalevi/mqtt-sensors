@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Windows tray: run the collectors in this folder with no console window."""
-import ctypes, os, shutil, subprocess, sys, tempfile
+import ctypes, os, subprocess, sys, tempfile
 from ctypes import wintypes
 from pathlib import Path
 
@@ -145,43 +145,42 @@ wndproc_ref = None
 def collectors():
     return sorted(p.name for p in HERE.glob("*.py") if p.name != "tray.py")
 
-def locate_pythonw():
-    found = []
-    seen = set()
-    def add(path):
-        if not path or not Path(path).is_file():
-            return
-        key = str(Path(path).resolve()).lower()
-        if key in seen:
-            return
-        seen.add(key)
-        found.append(str(Path(path).resolve()))
-    add(ROOT / "venv" / "Scripts" / "pythonw.exe")
-    add(ROOT / ".venv" / "Scripts" / "pythonw.exe")
-    exe = Path(sys.executable)
-    if exe.name.lower() == "python.exe":
-        add(exe.with_name("pythonw.exe"))
-    which = shutil.which("pythonw")
-    if which:
-        add(which)
-    return found
+INTERPRETER = None
+
+def venv_pythonw():
+    for name in ("venv", ".venv"):
+        path = ROOT / name / "Scripts" / "pythonw.exe"
+        if path.is_file():
+            return path.resolve()
+    return None
+
+def same_exe(left, right):
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return os.path.normcase(str(left)) == os.path.normcase(str(right))
 
 def relaunch_without_console():
-    if os.environ.get("MQTT_SENSORS_TRAY") == "1" and Path(sys.executable).name.lower() == "pythonw.exe":
-        return
-    found = locate_pythonw()
-    if not found:
-        user32.MessageBoxW(None, "pythonw.exe was not found in venv, .venv, or PATH.", "mqtt-sensors", MB_ICONERROR)
+    global INTERPRETER
+    target = venv_pythonw()
+    if target is None:
+        user32.MessageBoxW(None, "pythonw.exe was not found in venv\\Scripts or .venv\\Scripts.", "mqtt-sensors", MB_ICONERROR)
         raise SystemExit(1)
-    target = found[0]
-    if Path(sys.executable).resolve() == Path(target):
-        os.environ["MQTT_SENSORS_TRAY"] = "1"
+    INTERPRETER = str(target)
+    launcher = os.environ.get("__PYVENV_LAUNCHER__") or ""
+    on_venv = same_exe(sys.executable, target) or (launcher and same_exe(launcher, target))
+    if on_venv:
         return
+    if os.environ.get("MQTT_SENSORS_PYTHONW") == INTERPRETER:
+        user32.MessageBoxW(None, f"repo venv pythonw did not stay active:\n{sys.executable}", "mqtt-sensors", MB_ICONERROR)
+        raise SystemExit(1)
     env = os.environ.copy()
-    env["MQTT_SENSORS_TRAY"] = "1"
+    env["MQTT_SENSORS_PYTHONW"] = INTERPRETER
+    env["__PYVENV_LAUNCHER__"] = INTERPRETER
+    env["VIRTUAL_ENV"] = str(target.parent.parent)
     try:
         subprocess.Popen(
-            [target, str(Path(__file__).resolve())],
+            [INTERPRETER, str(Path(__file__).resolve())],
             cwd=str(ROOT),
             env=env,
             stdin=subprocess.DEVNULL,
@@ -190,7 +189,7 @@ def relaunch_without_console():
             creationflags=CREATE_NO_WINDOW,
         )
     except OSError as err:
-        user32.MessageBoxW(None, f"could not start pythonw: {err}", "mqtt-sensors", MB_ICONERROR)
+        user32.MessageBoxW(None, f"could not start {INTERPRETER}: {err}", "mqtt-sensors", MB_ICONERROR)
         raise SystemExit(1)
     kernel32.FreeConsole()
     os._exit(0)
@@ -240,9 +239,14 @@ def start_one(name):
     fd, err_path = tempfile.mkstemp(prefix="mqtt-sensors-", suffix=".txt")
     err_fh = os.fdopen(fd, "wb")
     try:
+        env = os.environ.copy()
+        env["MQTT_SENSORS_PYTHONW"] = INTERPRETER
+        env["__PYVENV_LAUNCHER__"] = INTERPRETER
+        env["VIRTUAL_ENV"] = str(Path(INTERPRETER).parent.parent)
         proc = subprocess.Popen(
-            [sys.executable, str(path)],
+            [INTERPRETER, str(path)],
             cwd=str(ROOT),
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=err_fh,
