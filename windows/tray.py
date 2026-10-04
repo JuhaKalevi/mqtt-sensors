@@ -108,6 +108,10 @@ user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR
 user32.MessageBoxW.restype = ctypes.c_int
 user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
 user32.LoadIconW.restype = wintypes.HICON
+user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+user32.LoadImageW.restype = wintypes.HICON
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
 kernel32 = ctypes.windll.kernel32
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
@@ -141,6 +145,20 @@ stopping = False
 exit_code = 0
 in_loop = False
 wndproc_ref = None
+
+def load_tray_icon():
+    path = HERE / "tray.ico"
+    fallback = user32.LoadIconW(None, IDI_APPLICATION)
+    if not path.is_file():
+        user32.MessageBoxW(None, "windows/tray.ico is missing", "mqtt-sensors", MB_ICONERROR)
+        return fallback
+    cx = user32.GetSystemMetrics(49) or 32
+    cy = user32.GetSystemMetrics(50) or 32
+    icon = user32.LoadImageW(None, str(path), 1, cx, cy, 0x10)
+    if not icon:
+        user32.MessageBoxW(None, "windows/tray.ico could not be loaded", "mqtt-sensors", MB_ICONERROR)
+        return fallback
+    return icon
 
 def collectors():
     return sorted(p.name for p in HERE.glob("*.py") if p.name != "tray.py")
@@ -376,12 +394,13 @@ def main():
     cls.lpfnWndProc = wndproc_ref
     cls.hInstance = hinst
     cls.lpszClassName = "mqtt-sensors-tray"
+    icon = load_tray_icon()
+    cls.hIcon = icon
     if not user32.RegisterClassW(ctypes.byref(cls)):
         fail("RegisterClassW failed")
     hwnd = user32.CreateWindowExW(0, "mqtt-sensors-tray", "mqtt-sensors", 0, 0, 0, 0, 0, None, None, hinst, None)
     if not hwnd:
         fail("CreateWindowExW failed")
-    icon = user32.LoadIconW(None, IDI_APPLICATION)
     nid = NOTIFYICONDATAW()
     nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
     nid.hWnd = hwnd
