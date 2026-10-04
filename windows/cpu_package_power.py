@@ -28,11 +28,19 @@ CONFIG_POWER = f"{PREFIX}/sensor/{OBJECT}/config"
 CONFIG_ENERGY = f"{PREFIX}/sensor/{OBJECT}_energy/config"
 AVAIL_T = f"{PREFIX}/sensor/{OBJECT}/availability"
 
+def hidden_console():
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 0
+    return info
+
 def cpu_model():
     proc = subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command",
          "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        startupinfo=hidden_console(),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
     )
     model = re.sub(r"\s+", " ", (proc.stdout or "").strip())
     model = re.sub(r"\(R\)|\(TM\)|CPU @.*|with Radeon.*", "", model, flags=re.I).strip()

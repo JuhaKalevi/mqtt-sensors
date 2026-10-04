@@ -6,7 +6,7 @@ Sensor object ids match Linux: `cpu_package_power_<hostname>`, `gpu<N>_power_<ho
 
 The HA device id is `windows_host_<hostname>`, not `linux_host_<hostname>`, so a Windows box does not claim a Linux device. The display name is still the hostname.
 
-This folder is the relaxed exception. An extra program already on the machine is allowed. No vendored driver, no pip, no OS branches in the Linux scripts. Fail-fast still applies: if the source is missing, the process exits. There are no systemd units; keep them running however you already keep a Windows process up (Task Scheduler is enough).
+This folder is the relaxed exception. An extra program already on the machine is allowed. No vendored driver, no pip, no OS branches in the Linux scripts. Fail-fast still applies: if the source is missing, the process exits. There are no systemd units. Double-click `windows/tray.pyw` (no console). The menu lists every collector script here except the tray; a tick runs it with no window, untick stops that process, and quit stops the ones the tray started. Ticks are remembered in `windows/tray_enabled.txt`. The menu opens the repo-root `.env` and exits if that file is missing.
 
 Run from anywhere. The scripts `chdir` to the repo root so `.env` loads the same way as the Linux units (`WorkingDirectory`).
 
