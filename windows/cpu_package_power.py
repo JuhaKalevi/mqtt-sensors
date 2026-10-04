@@ -53,6 +53,27 @@ def find_package(node, hardware_id=""):
             return found
     return None
 
+def parse_watts(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise SystemExit(f"LibreHardwareMonitor CPU Package value unreadable: {value!r}")
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = re.match(r"\s*([+-]?[0-9][0-9.,]*)", value)
+    if not match:
+        raise SystemExit(f"LibreHardwareMonitor CPU Package value unreadable: {value!r}")
+    num = match.group(1)
+    if "," in num and "." in num:
+        if num.rfind(",") > num.rfind("."):
+            num = num.replace(".", "").replace(",", ".")
+        else:
+            num = num.replace(",", "")
+    elif "," in num:
+        num = num.replace(",", ".")
+    try:
+        return float(num)
+    except ValueError:
+        raise SystemExit(f"LibreHardwareMonitor CPU Package value unreadable: {value!r}")
+
 def read_package_watts():
     conn.request("GET", "/data.json")
     resp = conn.getresponse()
@@ -62,7 +83,7 @@ def read_package_watts():
     sensor = find_package(json.loads(body))
     if sensor is None:
         raise SystemExit("LibreHardwareMonitor CPU Package sensor missing")
-    return float(sensor["RawValue"])
+    return parse_watts(sensor["RawValue"])
 
 CPU_MODEL = cpu_model()
 DISCOVERY_POWER = make_power_discovery(
