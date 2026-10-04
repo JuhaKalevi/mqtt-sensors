@@ -16,7 +16,7 @@ Collectors on a host share one HA device named after the hostname (`linux_host_<
 |---|---|---|
 | `cpu_package_power.py` | package power (W) and energy (kWh, RAM only, resets on start) | RAPL `energy_uj` fd |
 | `nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` |
-| `windows/cpu_package_power.py` | package power (W) and energy (kWh, RAM only) | LibreHardwareMonitor WMI `CPU Package` via one PowerShell loop |
+| `windows/cpu_package_power.py` | package power (W) and energy (kWh, RAM only) | LibreHardwareMonitor HTTP `GET /data.json` (`LHM_URL`) |
 | `windows/nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` (no `select`) |
 | `chia_farm_size.py` | plots, on-disk TiB, effective TiB, estimated netspace EiB, ETA to win (s) | farmer `:8559` + full node `:8555` TLS |
 | `chia_recompute_server_processing_time.py` | recompute processing time (s, full precision, display 1 decimal) | `journalctl -u chia_recompute_server -f` |
