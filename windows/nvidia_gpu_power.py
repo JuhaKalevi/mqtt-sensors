@@ -39,6 +39,12 @@ def parse_line(line):
         power = 0.0
     return {"idx": idx, "name": clean_gpu_name(parts[1]), "power": power}
 
+def hidden_console():
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 0
+    return info
+
 def read_n(proc, n):
     rows = []
     while len(rows) < n:
@@ -50,7 +56,11 @@ def read_n(proc, n):
             rows.append(row)
     return rows
 
-listed = subprocess.run(QUERY, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+listed = subprocess.run(
+    QUERY, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+    startupinfo=hidden_console(),
+    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+)
 rows = [parse_line(line.strip()) for line in (listed.stdout or "").splitlines()]
 rows = [row for row in rows if row]
 if not rows:
@@ -98,6 +108,8 @@ proc = subprocess.Popen(
     stderr=subprocess.DEVNULL,
     text=True,
     bufsize=1,
+    startupinfo=hidden_console(),
+    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
 )
 t_prev = time.monotonic()
 
