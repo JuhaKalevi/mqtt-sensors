@@ -32,7 +32,7 @@ def cpu_model():
     proc = subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command",
          "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
     )
     model = re.sub(r"\s+", " ", (proc.stdout or "").strip())
     model = re.sub(r"\(R\)|\(TM\)|CPU @.*|with Radeon.*", "", model, flags=re.I).strip()

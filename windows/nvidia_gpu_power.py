@@ -50,7 +50,7 @@ def read_n(proc, n):
             rows.append(row)
     return rows
 
-listed = subprocess.run(QUERY, capture_output=True, text=True)
+listed = subprocess.run(QUERY, capture_output=True, text=True, stdin=subprocess.DEVNULL)
 rows = [parse_line(line.strip()) for line in (listed.stdout or "").splitlines()]
 rows = [row for row in rows if row]
 if not rows:
@@ -93,6 +93,7 @@ client.loop_start()
 
 proc = subprocess.Popen(
     QUERY + ["--loop=1"],
+    stdin=subprocess.DEVNULL,
     stdout=subprocess.PIPE,
     stderr=subprocess.DEVNULL,
     text=True,

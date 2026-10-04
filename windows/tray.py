@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Windows tray: run the collectors in this folder with no console window."""
-import ctypes, os, subprocess, sys, time
+import ctypes, os, shutil, subprocess, sys, tempfile
 from ctypes import wintypes
 from pathlib import Path
 
@@ -145,13 +145,55 @@ wndproc_ref = None
 def collectors():
     return sorted(p.name for p in HERE.glob("*.py") if p.name != "tray.py")
 
-def pythonw():
+def locate_pythonw():
+    found = []
+    seen = set()
+    def add(path):
+        if not path or not Path(path).is_file():
+            return
+        key = str(Path(path).resolve()).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(str(Path(path).resolve()))
+    add(ROOT / "venv" / "Scripts" / "pythonw.exe")
+    add(ROOT / ".venv" / "Scripts" / "pythonw.exe")
     exe = Path(sys.executable)
     if exe.name.lower() == "python.exe":
-        sibling = exe.with_name("pythonw.exe")
-        if sibling.is_file():
-            return str(sibling)
-    return str(exe)
+        add(exe.with_name("pythonw.exe"))
+    which = shutil.which("pythonw")
+    if which:
+        add(which)
+    return found
+
+def relaunch_without_console():
+    if os.environ.get("MQTT_SENSORS_TRAY") == "1" and Path(sys.executable).name.lower() == "pythonw.exe":
+        return
+    found = locate_pythonw()
+    if not found:
+        user32.MessageBoxW(None, "pythonw.exe was not found in venv, .venv, or PATH.", "mqtt-sensors", MB_ICONERROR)
+        raise SystemExit(1)
+    target = found[0]
+    if Path(sys.executable).resolve() == Path(target):
+        os.environ["MQTT_SENSORS_TRAY"] = "1"
+        return
+    env = os.environ.copy()
+    env["MQTT_SENSORS_TRAY"] = "1"
+    try:
+        subprocess.Popen(
+            [target, str(Path(__file__).resolve())],
+            cwd=str(ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except OSError as err:
+        user32.MessageBoxW(None, f"could not start pythonw: {err}", "mqtt-sensors", MB_ICONERROR)
+        raise SystemExit(1)
+    kernel32.FreeConsole()
+    os._exit(0)
 
 def fail(msg):
     global exit_code
@@ -179,51 +221,77 @@ def save_enabled():
     names = [name for name in collectors() if name in enabled]
     STATE.write_text(("\n".join(names) + "\n") if names else "", encoding="utf-8")
 
+def read_err(path):
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        text = ""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return text[-1500:]
+
 def start_one(name):
     path = HERE / name
     if not path.is_file():
         fail(f"missing {name}")
         return
+    fd, err_path = tempfile.mkstemp(prefix="mqtt-sensors-", suffix=".txt")
+    err_fh = os.fdopen(fd, "wb")
     try:
         proc = subprocess.Popen(
-            [pythonw(), str(path)],
+            [sys.executable, str(path)],
             cwd=str(ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=err_fh,
             creationflags=CREATE_NO_WINDOW,
         )
     except OSError as err:
+        err_fh.close()
+        read_err(err_path)
         fail(f"could not start {name}: {err}")
         return
+    err_fh.close()
     if stopping:
+        if proc.poll() is None:
+            proc.terminate()
+        read_err(err_path)
         return
-    procs[name] = (proc, time.monotonic())
+    procs[name] = (proc, err_path)
 
 def stop_one(name):
     item = procs.pop(name, None)
     if not item:
         return
-    proc = item[0]
+    proc, err_path = item
     if proc.poll() is None:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+    read_err(err_path)
 
 def supervise():
-    now = time.monotonic()
-    for name, (proc, started) in list(procs.items()):
+    for name, (proc, err_path) in list(procs.items()):
         if proc.poll() is None:
             continue
         code = proc.returncode
+        detail = read_err(err_path)
         del procs[name]
         if name not in enabled:
             continue
-        if now - started < 2:
-            enabled.discard(name)
-            save_enabled()
-            user32.MessageBoxW(hwnd, f"{name} exited {code}", "mqtt-sensors", MB_ICONERROR)
+        if code == 0:
+            start_one(name)
             continue
-        start_one(name)
+        enabled.discard(name)
+        save_enabled()
+        body = f"{name} exited {code}"
+        if detail:
+            body = f"{body}\n{detail}"
+        user32.MessageBoxW(hwnd, body, "mqtt-sensors", MB_ICONERROR)
 
 def open_env():
     path = ROOT / ".env"
@@ -296,6 +364,7 @@ def wndproc(window, msg, wparam, lparam):
 
 def main():
     global hwnd, nid, nid_added, enabled, wndproc_ref, in_loop
+    relaunch_without_console()
     enabled = load_enabled()
     wndproc_ref = WNDPROC(wndproc)
     hinst = kernel32.GetModuleHandleW(None)
