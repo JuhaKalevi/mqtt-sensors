@@ -258,6 +258,8 @@ def attributed_power(paused):
         full_intensity_samples += 1
         if power_w > full_intensity_max_w:
             full_intensity_max_w = power_w
+        if full_intensity_samples == 900:
+            print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
     if full_intensity_samples < 900 or mt <= 0:
         return power_w
     f = n / mt
