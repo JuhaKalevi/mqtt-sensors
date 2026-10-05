@@ -1,3 +1,4 @@
 .env
 __pycache__/
 windows/tray_enabled.txt
+windows/logs/

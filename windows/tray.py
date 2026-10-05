@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Windows tray: run the collectors in this folder with no console window."""
-import ctypes, os, subprocess, sys, tempfile
+import ctypes, os, subprocess, sys, time
 from ctypes import wintypes
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 STATE = HERE / "tray_enabled.txt"
+LOG_DIR = HERE / "logs"
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 WM_DESTROY = 0x0002
 WM_TIMER = 0x0113
@@ -16,6 +17,7 @@ WM_RBUTTONUP = 0x0205
 WM_CONTEXTMENU = 0x007B
 WM_APP = 0x8000
 NIM_ADD = 0
+NIM_MODIFY = 1
 NIM_DELETE = 2
 NIF_MESSAGE = 0x1
 NIF_ICON = 0x2
@@ -141,24 +143,33 @@ nid = None
 nid_added = False
 enabled = set()
 procs = {}
+next_restart = {}
 stopping = False
 exit_code = 0
 in_loop = False
 wndproc_ref = None
+icon_normal = None
+icon_warn = None
+icon_warn_active = False
+BACKOFF_S = 3.0
 
-def load_tray_icon():
-    path = HERE / "tray.ico"
+def load_icon_file(path):
     fallback = user32.LoadIconW(None, IDI_APPLICATION)
     if not path.is_file():
-        user32.MessageBoxW(None, "windows/tray.ico is missing", "mqtt-sensors", MB_ICONERROR)
+        user32.MessageBoxW(None, f"{path.name} is missing", "mqtt-sensors", MB_ICONERROR)
         return fallback
     cx = user32.GetSystemMetrics(49) or 32
     cy = user32.GetSystemMetrics(50) or 32
     icon = user32.LoadImageW(None, str(path), 1, cx, cy, 0x10)
     if not icon:
-        user32.MessageBoxW(None, "windows/tray.ico could not be loaded", "mqtt-sensors", MB_ICONERROR)
+        user32.MessageBoxW(None, f"{path.name} could not be loaded", "mqtt-sensors", MB_ICONERROR)
         return fallback
     return icon
+
+def load_tray_icons():
+    global icon_normal, icon_warn
+    icon_normal = load_icon_file(HERE / "tray.ico")
+    icon_warn = load_icon_file(HERE / "tray_warn.ico")
 
 def collectors():
     return sorted(p.name for p in HERE.glob("*.py") if p.name != "tray.py")
@@ -238,24 +249,55 @@ def save_enabled():
     names = [name for name in collectors() if name in enabled]
     STATE.write_text(("\n".join(names) + "\n") if names else "", encoding="utf-8")
 
-def read_err(path):
+def log_path(name):
+    return LOG_DIR / f"{Path(name).stem}.log"
+
+def append_log(name, line):
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        text = ""
-    try:
-        os.unlink(path)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(log_path(name), "a", encoding="utf-8", errors="replace") as fh:
+            fh.write(line)
+            if not line.endswith("\n"):
+                fh.write("\n")
     except OSError:
         pass
-    return text[-1500:]
+
+def is_running(name):
+    item = procs.get(name)
+    return item is not None and item[0].poll() is None
+
+def set_tray_icon(warn):
+    global icon_warn_active
+    if nid is None or not nid_added:
+        return
+    if warn == icon_warn_active:
+        return
+    icon_warn_active = warn
+    nid.hIcon = icon_warn if warn else icon_normal
+    shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
+
+def update_tray_icon():
+    if stopping:
+        return
+    warn = any(not is_running(name) for name in enabled)
+    set_tray_icon(warn)
 
 def start_one(name):
     path = HERE / name
     if not path.is_file():
-        fail(f"missing {name}")
-        return
-    fd, err_path = tempfile.mkstemp(prefix="mqtt-sensors-", suffix=".txt")
-    err_fh = os.fdopen(fd, "wb")
+        append_log(name, f"missing {name}")
+        return False
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path(name), "ab")
+    except OSError as err:
+        append_log(name, f"could not open log: {err}")
+        return False
+    try:
+        log_fh.write(b"\n--- start ---\n")
+        log_fh.flush()
+    except OSError:
+        pass
     try:
         env = os.environ.copy()
         env["MQTT_SENSORS_PYTHONW"] = INTERPRETER
@@ -266,54 +308,75 @@ def start_one(name):
             cwd=str(ROOT),
             env=env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=err_fh,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
             creationflags=CREATE_NO_WINDOW,
         )
     except OSError as err:
-        err_fh.close()
-        read_err(err_path)
-        fail(f"could not start {name}: {err}")
-        return
-    err_fh.close()
+        try:
+            log_fh.write(f"could not start: {err}\n".encode())
+            log_fh.close()
+        except OSError:
+            pass
+        append_log(name, f"could not start {name}: {err}")
+        return False
     if stopping:
         if proc.poll() is None:
             proc.terminate()
-        read_err(err_path)
-        return
-    procs[name] = (proc, err_path)
+        try:
+            log_fh.close()
+        except OSError:
+            pass
+        return False
+    procs[name] = (proc, log_fh)
+    return True
 
 def stop_one(name):
+    next_restart.pop(name, None)
     item = procs.pop(name, None)
     if not item:
         return
-    proc, err_path = item
+    proc, log_fh = item
     if proc.poll() is None:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-    read_err(err_path)
+    try:
+        log_fh.close()
+    except OSError:
+        pass
 
 def supervise():
-    for name, (proc, err_path) in list(procs.items()):
+    now = time.monotonic()
+    for name, (proc, log_fh) in list(procs.items()):
         if proc.poll() is None:
             continue
         code = proc.returncode
-        detail = read_err(err_path)
+        try:
+            log_fh.close()
+        except OSError:
+            pass
         del procs[name]
-        if name not in enabled:
+        if name not in enabled or stopping:
             continue
-        if code == 0:
-            start_one(name)
+        append_log(name, f"exited {code}, restarting in {BACKOFF_S:.0f}s")
+        next_restart[name] = now + BACKOFF_S
+    for name in list(next_restart):
+        if stopping or name not in enabled:
+            next_restart.pop(name, None)
             continue
-        enabled.discard(name)
-        save_enabled()
-        body = f"{name} exited {code}"
-        if detail:
-            body = f"{body}\n{detail}"
-        user32.MessageBoxW(hwnd, body, "mqtt-sensors", MB_ICONERROR)
+        if is_running(name):
+            next_restart.pop(name, None)
+            continue
+        if now < next_restart[name]:
+            continue
+        next_restart.pop(name, None)
+        if not start_one(name):
+            append_log(name, f"start failed, retry in {BACKOFF_S:.0f}s")
+            next_restart[name] = now + BACKOFF_S
+    update_tray_icon()
 
 def open_env():
     path = ROOT / ".env"
@@ -329,19 +392,27 @@ def toggle(name):
         enabled.discard(name)
         save_enabled()
         stop_one(name)
+        update_tray_icon()
         return
-    start_one(name)
-    if stopping or name not in procs:
+    if not start_one(name):
+        enabled.add(name)
+        save_enabled()
+        next_restart[name] = time.monotonic() + BACKOFF_S
+        update_tray_icon()
+        return
+    if stopping:
         return
     enabled.add(name)
     save_enabled()
+    update_tray_icon()
 
 def show_menu():
     names = collectors()
     menu = user32.CreatePopupMenu()
     for i, name in enumerate(names, 1):
         flags = MF_STRING | (MF_CHECKED if name in enabled else 0)
-        user32.AppendMenuW(menu, flags, i, name)
+        label = f"{name} ✓" if is_running(name) else name
+        user32.AppendMenuW(menu, flags, i, label)
     user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
     user32.AppendMenuW(menu, MF_STRING, ID_ENV, "Open .env")
     user32.AppendMenuW(menu, MF_STRING, ID_QUIT, "Quit")
@@ -365,6 +436,7 @@ def shutdown():
     if stopping:
         return
     stopping = True
+    next_restart.clear()
     for name in list(procs):
         stop_one(name)
     if nid_added and nid is not None:
@@ -394,8 +466,8 @@ def main():
     cls.lpfnWndProc = wndproc_ref
     cls.hInstance = hinst
     cls.lpszClassName = "mqtt-sensors-tray"
-    icon = load_tray_icon()
-    cls.hIcon = icon
+    load_tray_icons()
+    cls.hIcon = icon_normal
     if not user32.RegisterClassW(ctypes.byref(cls)):
         fail("RegisterClassW failed")
     hwnd = user32.CreateWindowExW(0, "mqtt-sensors-tray", "mqtt-sensors", 0, 0, 0, 0, 0, None, None, hinst, None)
@@ -407,7 +479,7 @@ def main():
     nid.uID = 1
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
     nid.uCallbackMessage = WM_APP
-    nid.hIcon = icon
+    nid.hIcon = icon_normal
     nid.szTip = "mqtt-sensors"
     if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
         fail("Shell_NotifyIconW failed")
@@ -415,9 +487,11 @@ def main():
     if not user32.SetTimer(hwnd, 1, 1000, None):
         fail("SetTimer failed")
     for name in sorted(enabled):
-        start_one(name)
+        if not start_one(name):
+            next_restart[name] = time.monotonic() + BACKOFF_S
         if stopping:
             raise SystemExit(exit_code)
+    update_tray_icon()
     in_loop = True
     msg = MSG()
     while True:
