@@ -32,7 +32,7 @@ python windows/nvidia_gpu_power.py
 
 ## XMRig
 
-`xmrig_status.py` polls XMRig’s HTTP API (`GET /2/summary`, `POST /json_rpc`, `GET /2/backends`, `GET`/`PUT /2/config`) on one held connection. No console program. `XMRIG_HOST` and `XMRIG_PORT` default to `127.0.0.1` and `44444`; `XMRIG_TOKEN` is sent when set. Hashrate, reject ratio, mining switch, and intensity slider match the Linux objects. The profitability factor is published when the same inputs exist (package power, `xmr_per_hs_day`, XMR/EUR, and a spot price). The switch and intensity need `http.restricted=false`. Intensity can persist to XMRig `config.json` when autosave is on. If XMRig is not reachable the process exits.
+`xmrig_status.py` polls XMRig’s HTTP API (`GET /2/summary`, `POST /json_rpc`, `GET /2/backends`, `GET`/`PUT /2/config`) on one held connection. No console program. `XMRIG_HOST` and `XMRIG_PORT` default to `127.0.0.1` and `44444`; `XMRIG_TOKEN` is sent when set. Hashrate, reject ratio, mining switch, and intensity slider match the Linux objects. The profitability factor is published when the same inputs exist (package power, `xmr_per_hs_day`, XMR/EUR, and a spot price); mining power is intensity-attributed like Linux once a full-intensity baseline exists. The switch and intensity need `http.restricted=false`. Intensity can persist to XMRig `config.json` when autosave is on. If XMRig is not reachable the process exits.
 
 ```
 python windows/xmrig_status.py

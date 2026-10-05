@@ -4,6 +4,7 @@
 Linux reference: xmrig_status.py. Same object ids and HA meaning. HTTP only.
 """
 import json, os, sys, time, http.client
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -105,6 +106,10 @@ max_threads = None
 baseline_profile = None
 profile_key = None
 pending_intensity = None
+full_intensity_samples = 0
+full_intensity_max_w = 0.0
+full_intensity_window = deque(maxlen=900)
+last_baseline_check = 0.0
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -244,6 +249,42 @@ def inputs_ready():
         and power_w is not None
     )
 
+
+def attributed_power(paused):
+    global full_intensity_samples, full_intensity_max_w, last_baseline_check
+    if power_w is None:
+        return None
+    ensure_baseline()
+    n = len(active_cpu().get("threads") or [])
+    mt = max_threads or 0
+    ready = full_intensity_samples >= 900 and mt > 0
+    if not paused and mt > 0 and n == mt and power_w > 0:
+        full_intensity_window.append(power_w)
+        if not ready:
+            full_intensity_samples += 1
+            if power_w > full_intensity_max_w:
+                full_intensity_max_w = power_w
+            if full_intensity_samples == 900:
+                print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                last_baseline_check = time.monotonic()
+                ready = True
+        else:
+            now = time.monotonic()
+            if now - last_baseline_check >= 300.0:
+                last_baseline_check = now
+                recent_max = max(full_intensity_window)
+                if recent_max < full_intensity_max_w * 0.95 or recent_max > full_intensity_max_w * 1.05:
+                    full_intensity_max_w = recent_max
+                    print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+    if not ready or mt <= 0:
+        return power_w
+    f = n / mt
+    if f <= 0:
+        return 0.0
+    if f >= 1:
+        return power_w
+    return min(power_w, f * full_intensity_max_w)
+
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
         return None
@@ -274,10 +315,14 @@ def publish_stats(data):
         last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
-    if not paused and power_w is not None and power_w > 0:
-        last_power = power_w
+    mining_w = attributed_power(paused)
+    if not paused:
+        if mining_w is not None and mining_w > 0:
+            last_power = mining_w
+        eff_power = last_power if mining_w is None else mining_w
+    else:
+        eff_power = last_power
     eff_hr = hr if not paused and hr > 0 else last_hr
-    eff_power = power_w if not paused and power_w is not None and power_w > 0 else last_power
     factor = profitability(eff_hr, eff_power)
     if factor is None:
         return
