@@ -15,6 +15,7 @@ PREFIX = settings["prefix"]
 AVAIL_T = f"{PREFIX}/sensor/power_supply_{HOSTNAME}/availability"
 ROOT = Path("/sys/class/power_supply")
 batteries = {}
+cleared = set()
 
 def read_opt(path):
     try:
@@ -22,24 +23,35 @@ def read_opt(path):
     except OSError:
         return ""
 
-def open_battery(d):
-    try:
-        if read_opt(d / "type") != "Battery":
-            return None
-        f = open(d / "capacity")
-    except OSError:
-        return None
+def slug(text):
+    out = []
+    gap = False
+    for c in text:
+        if c.isalnum():
+            out.append(c)
+            gap = False
+        elif not gap:
+            out.append("_")
+            gap = True
+    return "".join(out).strip("_")
+
+def battery_key(d):
+    model = read_opt(d / "model_name")
+    if model:
+        return slug(model)
+    return d.name
+
+def object_id(key):
+    return f"power_supply_{key}_{HOSTNAME}"
+
+def discovery_for(d, key, peripheral):
     model = read_opt(d / "model_name")
     manufacturer = read_opt(d / "manufacturer")
-    scope = read_opt(d / "scope")
     label = model or manufacturer or d.name.replace("_", " ")
-    obj = f"power_supply_{d.name}_{HOSTNAME}"
+    obj = object_id(key)
     state = f"{PREFIX}/sensor/{obj}/state"
     config = f"{PREFIX}/sensor/{obj}/config"
-    if scope == "System":
-        device = HOST_DEVICE
-        name = label if "battery" in label.lower() else f"{label} Battery"
-    else:
+    if peripheral:
         device = {
             "identifiers": [obj],
             "name": label,
@@ -50,19 +62,23 @@ def open_battery(d):
         if model:
             device["model"] = model
         name = "Battery"
-    return {
-        "name": d.name,
-        "fd": f,
-        "state": state,
-        "config": config,
-        "discovery": make_sensor_discovery(
-            name, state, AVAIL_T, obj, device,
-            unit="%", device_class="battery", state_class="measurement"
-        ),
-    }
+    else:
+        device = HOST_DEVICE
+        name = label if "battery" in label.lower() else f"{label} Battery"
+    return state, config, make_sensor_discovery(
+        name, state, AVAIL_T, obj, device,
+        unit="%", device_class="battery", state_class="measurement"
+    )
 
-def drop_battery(name):
-    b = batteries.pop(name, None)
+def clear_legacy(d, key):
+    legacy = f"power_supply_{d.name}_{HOSTNAME}"
+    if legacy == object_id(key) or legacy in cleared:
+        return
+    client.publish(f"{PREFIX}/sensor/{legacy}/config", "", retain=True)
+    cleared.add(legacy)
+
+def drop_battery(key):
+    b = batteries.pop(key, None)
     if not b:
         return
     try:
@@ -71,26 +87,63 @@ def drop_battery(name):
         pass
     client.publish(b["config"], "", retain=True)
 
+def choose(dirs):
+    return sorted(dirs, key=lambda d: (read_opt(d / "scope") == "System", d.name))[0]
+
 def sync_batteries():
-    present = set()
+    groups = {}
     try:
-        entries = sorted(ROOT.iterdir())
+        entries = list(ROOT.iterdir())
     except OSError:
         entries = []
     for d in entries:
-        if not d.is_dir():
+        if not d.is_dir() or read_opt(d / "type") != "Battery":
             continue
-        present.add(d.name)
-        if d.name in batteries:
+        if not (d / "capacity").exists():
             continue
-        b = open_battery(d)
-        if not b:
+        groups.setdefault(battery_key(d), []).append(d)
+    for key, dirs in groups.items():
+        peripheral = any(read_opt(d / "scope") != "System" for d in dirs)
+        picked = choose(dirs)
+        for d in dirs:
+            clear_legacy(d, key)
+        b = batteries.get(key)
+        if b and b["name"] not in {d.name for d in dirs}:
+            try:
+                b["fd"].close()
+            except OSError:
+                pass
+            try:
+                b["fd"] = open(picked / "capacity")
+                b["name"] = picked.name
+            except OSError:
+                b["name"] = ""
+        if b and b["peripheral"] != peripheral:
+            state, config, disc = discovery_for(picked, key, peripheral)
+            b["peripheral"] = peripheral
+            b["state"] = state
+            b["config"] = config
+            b["discovery"] = disc
+            client.publish(config, json.dumps(disc), retain=True)
+        if b:
             continue
-        batteries[d.name] = b
-        client.publish(b["config"], json.dumps(b["discovery"]), retain=True)
-    for name in list(batteries):
-        if name not in present:
-            drop_battery(name)
+        try:
+            fd = open(picked / "capacity")
+        except OSError:
+            continue
+        state, config, disc = discovery_for(picked, key, peripheral)
+        batteries[key] = {
+            "name": picked.name,
+            "fd": fd,
+            "state": state,
+            "config": config,
+            "peripheral": peripheral,
+            "discovery": disc,
+        }
+        client.publish(config, json.dumps(disc), retain=True)
+    for key in list(batteries):
+        if key not in groups:
+            drop_battery(key)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
@@ -106,8 +159,8 @@ client.loop_start()
 try:
     while True:
         sync_batteries()
-        for name in list(batteries):
-            b = batteries.get(name)
+        for key in list(batteries):
+            b = batteries.get(key)
             if not b:
                 continue
             try:
@@ -118,7 +171,11 @@ try:
                     raise OSError("empty")
                 client.publish(b["state"], val, retain=True)
             except OSError:
-                drop_battery(name)
+                try:
+                    b["fd"].close()
+                except OSError:
+                    pass
+                b["name"] = ""
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
@@ -126,5 +183,5 @@ finally:
     client.publish(AVAIL_T, "offline", retain=True)
     client.loop_stop()
     client.disconnect()
-    for name in list(batteries):
-        drop_battery(name)
+    for key in list(batteries):
+        drop_battery(key)
