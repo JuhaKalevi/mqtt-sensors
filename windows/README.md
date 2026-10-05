@@ -2,7 +2,7 @@
 
 Linux collectors at the repo root are the reference for what we publish. These scripts copy that contract and do not share the read path. Shared code is `mqtt_common.py` only (dotenv, hostname, discovery, client).
 
-Sensor object ids match Linux: `cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, plus the matching `_energy` sensors, and `xmrig_hashrate_<hostname>`, `xmrig_reject_ratio_<hostname>`, `xmrig_mining_<hostname>`, `xmrig_profitability_factor_<hostname>`. Availability topics match too (`cpu_package_power_<hostname>`, `gpu_power_<hostname>`, `xmrig_<hostname>`). A Windows miner therefore feeds the same MQTT names as a Linux one, including XMRig profitability’s package-power topic.
+Sensor object ids match Linux: `cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, plus the matching `_energy` sensors, and `xmrig_hashrate_<hostname>`, `xmrig_reject_ratio_<hostname>`, `xmrig_mining_<hostname>`, `xmrig_intensity_<hostname>`, `xmrig_profitability_factor_<hostname>`. Availability topics match too (`cpu_package_power_<hostname>`, `gpu_power_<hostname>`, `xmrig_<hostname>`). A Windows miner therefore feeds the same MQTT names as a Linux one, including XMRig profitability’s package-power topic.
 
 The HA device id is `windows_host_<hostname>`, not `linux_host_<hostname>`, so a Windows box does not claim a Linux device. The display name is still the hostname.
 
@@ -32,7 +32,7 @@ python windows/nvidia_gpu_power.py
 
 ## XMRig
 
-`xmrig_status.py` polls XMRig’s HTTP API (`GET /2/summary`, `POST /json_rpc`) on one held connection. No console program. `XMRIG_HOST` and `XMRIG_PORT` default to `127.0.0.1` and `44444`; `XMRIG_TOKEN` is sent when set. Hashrate, reject ratio, and the mining switch match the Linux objects. The profitability factor is published when the same inputs exist (package power, `xmr_per_hs_day`, XMR/EUR, and a spot price). The switch needs `http.restricted=false`. If XMRig is not reachable the process exits.
+`xmrig_status.py` polls XMRig’s HTTP API (`GET /2/summary`, `POST /json_rpc`, `GET /2/backends`, `GET`/`PUT /2/config`) on one held connection. No console program. `XMRIG_HOST` and `XMRIG_PORT` default to `127.0.0.1` and `44444`; `XMRIG_TOKEN` is sent when set. Hashrate, reject ratio, mining switch, and intensity slider match the Linux objects. The profitability factor is published when the same inputs exist (package power, `xmr_per_hs_day`, XMR/EUR, and a spot price). The switch and intensity need `http.restricted=false`. Intensity can persist to XMRig `config.json` when autosave is on. If XMRig is not reachable the process exits.
 
 ```
 python windows/xmrig_status.py
