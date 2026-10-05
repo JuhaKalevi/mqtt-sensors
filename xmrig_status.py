@@ -111,6 +111,7 @@ profile_key = None
 pending_intensity = None
 full_intensity_samples = 0
 full_intensity_max_w = 0.0
+last_baseline_check = 0.0
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -281,23 +282,37 @@ def missing_inputs(eff_hr, eff_power):
 
 
 def attributed_power(paused):
-    global full_intensity_samples, full_intensity_max_w
+    global full_intensity_samples, full_intensity_max_w, last_baseline_check
     if power_w is None:
         return None
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
     mt = max_threads or 0
+    ready = full_intensity_samples >= 900 and mt > 0
     if not paused and mt > 0 and n == mt and power_w > 0:
-        full_intensity_samples += 1
-        if power_w > full_intensity_max_w:
-            full_intensity_max_w = power_w
-        if full_intensity_samples == 900:
-            print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
-    if full_intensity_samples < 900 or mt <= 0:
+        if not ready:
+            full_intensity_samples += 1
+            if power_w > full_intensity_max_w:
+                full_intensity_max_w = power_w
+            if full_intensity_samples == 900:
+                print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                last_baseline_check = time.monotonic()
+                ready = True
+        else:
+            now = time.monotonic()
+            if now - last_baseline_check >= 300.0:
+                last_baseline_check = now
+                if power_w < full_intensity_max_w * 0.95 or power_w > full_intensity_max_w * 1.05:
+                    full_intensity_samples = 0
+                    full_intensity_max_w = 0.0
+                    ready = False
+    if not ready or mt <= 0:
         return power_w
     f = n / mt
     if f <= 0:
         return 0.0
+    if f >= 1:
+        return power_w
     return min(power_w, f * full_intensity_max_w)
 
 def profitability(eff_hr, eff_power):
