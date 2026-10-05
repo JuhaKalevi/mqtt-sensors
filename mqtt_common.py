@@ -78,6 +78,26 @@ def make_switch_discovery(name, state_topic, command_topic, availability_topic, 
         "device": device,
     }
 
+def make_number_discovery(name, state_topic, command_topic, availability_topic, unique_id, device,
+                          min_value=0, max_value=100, step=1, mode="slider", unit=None):
+    d = {
+        "name": name,
+        "state_topic": state_topic,
+        "command_topic": command_topic,
+        "availability_topic": availability_topic,
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "min": min_value,
+        "max": max_value,
+        "step": step,
+        "mode": mode,
+        "unique_id": unique_id,
+        "device": device,
+    }
+    if unit is not None:
+        d["unit_of_measurement"] = unit
+    return d
+
 def switch_mode(env_name):
     mode = os.getenv(env_name) or "read_only"
     if mode not in ("read_only", "control"):

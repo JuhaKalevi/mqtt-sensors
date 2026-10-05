@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows XMRig hashrate, reject ratio, mining switch, optional profitability factor → MQTT + HA.
+"""Windows XMRig hashrate, reject ratio, mining switch, intensity, optional profitability factor → MQTT + HA.
 
 Linux reference: xmrig_status.py. Same object ids and HA meaning. HTTP only.
 """
@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
 from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_switch_discovery, create_client
+    get_hostname, get_mqtt_settings, make_switch_discovery, make_number_discovery, create_client
 )
 
 HOSTNAME = get_hostname()
@@ -32,16 +32,20 @@ PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None or HA_TOKEN is 
 OBJ_HR = f"xmrig_hashrate_{HOSTNAME}"
 OBJ_REJ = f"xmrig_reject_ratio_{HOSTNAME}"
 OBJ_SW = f"xmrig_mining_{HOSTNAME}"
+OBJ_INT = f"xmrig_intensity_{HOSTNAME}"
 OBJ_PF = f"xmrig_profitability_factor_{HOSTNAME}"
 AVAIL_T = f"{PREFIX}/sensor/xmrig_{HOSTNAME}/availability"
 STATE_HR = f"{PREFIX}/sensor/{OBJ_HR}/state"
 STATE_REJ = f"{PREFIX}/sensor/{OBJ_REJ}/state"
 STATE_SW = f"{PREFIX}/switch/{OBJ_SW}/state"
+STATE_INT = f"{PREFIX}/number/{OBJ_INT}/state"
 STATE_PF = f"{PREFIX}/sensor/{OBJ_PF}/state"
 CMD_SW = f"{PREFIX}/switch/{OBJ_SW}/set"
+CMD_INT = f"{PREFIX}/number/{OBJ_INT}/set"
 CONFIG_HR = f"{PREFIX}/sensor/{OBJ_HR}/config"
 CONFIG_REJ = f"{PREFIX}/sensor/{OBJ_REJ}/config"
 CONFIG_SW = f"{PREFIX}/switch/{OBJ_SW}/config"
+CONFIG_INT = f"{PREFIX}/number/{OBJ_INT}/config"
 CONFIG_PF = f"{PREFIX}/sensor/{OBJ_PF}/config"
 TOPIC_POWER = f"{PREFIX}/sensor/cpu_package_power_{HOSTNAME}/state"
 TOPIC_RATE = f"{PREFIX}/sensor/xmr_per_hs_day/state"
@@ -73,6 +77,10 @@ DISCOVERY_REJ = {
 DISCOVERY_SW = make_switch_discovery(
     "XMRig Mining", STATE_SW, CMD_SW, AVAIL_T, OBJ_SW, DEVICE
 )
+DISCOVERY_INT = make_number_discovery(
+    "XMRig Intensity", STATE_INT, CMD_INT, AVAIL_T, OBJ_INT, DEVICE,
+    min_value=0, max_value=100, step=1, mode="slider", unit="%",
+)
 DISCOVERY_PF = {
     "name": "XMRig Profitability Factor",
     "state_topic": STATE_PF,
@@ -93,6 +101,10 @@ xmr_eur = None
 spot = SPOT_FIXED
 pf_discovered = False
 last_ha_spot = 0.0
+max_threads = None
+baseline_profile = None
+profile_key = None
+pending_intensity = None
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -138,6 +150,70 @@ def summary():
 
 def rpc(method):
     api("POST", "/json_rpc", {"method": method, "id": 1})
+
+def backends():
+    return api("GET", "/2/backends")
+
+def get_config():
+    return api("GET", "/2/config")
+
+def put_config(cfg):
+    api("PUT", "/2/config", cfg)
+
+def active_cpu():
+    for b in backends():
+        if b.get("type") == "cpu":
+            return b
+    raise KeyError("cpu")
+
+def ensure_baseline():
+    global max_threads, baseline_profile, profile_key
+    if max_threads is not None:
+        return
+    cpu = active_cpu()
+    profile_key = cpu["profile"]
+    cfg = get_config()
+    profile = cfg["cpu"][profile_key]
+    n_back = len(cpu.get("threads") or [])
+    if isinstance(profile, list):
+        n_prof = len(profile)
+    elif isinstance(profile, dict):
+        n_prof = int(profile["threads"])
+    else:
+        n_prof = 0
+    max_threads = n_prof if n_prof > 0 else n_back
+    baseline_profile = json.loads(json.dumps(profile))
+
+def intensity_threads(n):
+    if isinstance(baseline_profile, list):
+        return baseline_profile[:n]
+    out = dict(baseline_profile)
+    out["threads"] = n
+    return out
+
+def apply_intensity(percent):
+    ensure_baseline()
+    percent = max(0, min(100, int(percent)))
+    n = percent * max_threads // 100
+    cfg = get_config()
+    cfg["cpu"][profile_key] = intensity_threads(n)
+    put_config(cfg)
+
+def current_intensity_percent():
+    cpu = active_cpu()
+    n = len(cpu.get("threads") or [])
+    if max_threads is None:
+        return 100 if n else 0
+    if max_threads == 0:
+        return 0
+    return min(100, n * 100 // max_threads)
+
+def flush_pending_intensity():
+    global pending_intensity
+    if pending_intensity is None:
+        return
+    apply_intensity(pending_intensity)
+    pending_intensity = None
 
 def refresh_ha_spot():
     global spot
@@ -186,6 +262,7 @@ def publish_stats(data):
     client.publish(STATE_HR, format(hr, ".15g"), retain=True)
     client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
     client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
+    client.publish(STATE_INT, str(current_intensity_percent()), retain=True)
     if not PROFIT_WANTED:
         return
     now = time.monotonic()
@@ -214,7 +291,9 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR), retain=True)
         client.publish(CONFIG_REJ, json.dumps(DISCOVERY_REJ), retain=True)
         client.publish(CONFIG_SW, json.dumps(DISCOVERY_SW), retain=True)
+        client.publish(CONFIG_INT, json.dumps(DISCOVERY_INT), retain=True)
         client.subscribe(CMD_SW)
+        client.subscribe(CMD_INT)
         if PROFIT_WANTED:
             client.subscribe(TOPIC_POWER)
             client.subscribe(TOPIC_RATE)
@@ -224,7 +303,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(AVAIL_T, "online", retain=True)
 
 def on_message(client, userdata, msg):
-    global power_w, xmr_rate, xmr_eur, spot
+    global power_w, xmr_rate, xmr_eur, spot, pending_intensity
     topic = msg.topic
     payload = msg.payload.decode()
     if topic == CMD_SW:
@@ -233,6 +312,9 @@ def on_message(client, userdata, msg):
         elif payload == "OFF":
             rpc("pause")
         publish_stats(summary())
+        return
+    if topic == CMD_INT:
+        pending_intensity = int(float(payload))
         return
     if not PROFIT_WANTED:
         return
@@ -261,6 +343,7 @@ client.loop_start()
 
 try:
     while True:
+        flush_pending_intensity()
         publish_stats(summary())
         time.sleep(1.0)
 except KeyboardInterrupt:
