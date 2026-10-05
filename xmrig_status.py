@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """XMRig hashrate, reject ratio, mining switch, intensity, optional profitability factor → MQTT + HA."""
 import json, os, sys, time, http.client
+from collections import deque
 from urllib.parse import urlparse
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device, make_number_discovery, create_client
@@ -111,6 +112,7 @@ profile_key = None
 pending_intensity = None
 full_intensity_samples = 0
 full_intensity_max_w = 0.0
+full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
 
 def auth_headers():
@@ -290,6 +292,7 @@ def attributed_power(paused):
     mt = max_threads or 0
     ready = full_intensity_samples >= 900 and mt > 0
     if not paused and mt > 0 and n == mt and power_w > 0:
+        full_intensity_window.append(power_w)
         if not ready:
             full_intensity_samples += 1
             if power_w > full_intensity_max_w:
@@ -302,10 +305,10 @@ def attributed_power(paused):
             now = time.monotonic()
             if now - last_baseline_check >= 300.0:
                 last_baseline_check = now
-                if power_w < full_intensity_max_w * 0.95 or power_w > full_intensity_max_w * 1.05:
-                    full_intensity_samples = 0
-                    full_intensity_max_w = 0.0
-                    ready = False
+                recent_max = max(full_intensity_window)
+                if recent_max < full_intensity_max_w * 0.95 or recent_max > full_intensity_max_w * 1.05:
+                    full_intensity_max_w = recent_max
+                    print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
     if not ready or mt <= 0:
         return power_w
     f = n / mt
