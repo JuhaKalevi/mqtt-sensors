@@ -141,7 +141,7 @@ def api(method, path, body=None):
     conn.request(method, path, body=payload, headers=auth_headers())
     resp = conn.getresponse()
     data = resp.read()
-    if resp.status != 200:
+    if not 200 <= resp.status < 300:
         raise SystemExit(f"XMRig HTTP {resp.status} {path}")
     return json.loads(data) if data else {}
 
