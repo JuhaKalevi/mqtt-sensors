@@ -109,6 +109,8 @@ max_threads = None
 baseline_profile = None
 profile_key = None
 pending_intensity = None
+full_intensity_samples = 0
+full_intensity_max_w = 0.0
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -277,6 +279,25 @@ def missing_inputs(eff_hr, eff_power):
         missing.append("package watts (live or last mining)")
     return missing
 
+
+def attributed_power(paused):
+    global full_intensity_samples, full_intensity_max_w
+    if power_w is None:
+        return None
+    ensure_baseline()
+    n = len(active_cpu().get("threads") or [])
+    mt = max_threads or 0
+    if not paused and mt > 0 and n == mt and power_w > 0:
+        full_intensity_samples += 1
+        if power_w > full_intensity_max_w:
+            full_intensity_max_w = power_w
+    if full_intensity_samples < 900 or mt <= 0:
+        return power_w
+    f = n / mt
+    if f <= 0:
+        return 0.0
+    return min(power_w, f * full_intensity_max_w)
+
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
         return None
@@ -307,10 +328,14 @@ def publish_stats(data):
         last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
-    if not paused and power_w is not None and power_w > 0:
-        last_power = power_w
+    mining_w = attributed_power(paused)
+    if not paused:
+        if mining_w is not None and mining_w > 0:
+            last_power = mining_w
+        eff_power = last_power if mining_w is None else mining_w
+    else:
+        eff_power = last_power
     eff_hr = hr if not paused and hr > 0 else last_hr
-    eff_power = power_w if not paused and power_w is not None and power_w > 0 else last_power
     factor = profitability(eff_hr, eff_power)
     if factor is None:
         missing = missing_inputs(eff_hr, eff_power)
