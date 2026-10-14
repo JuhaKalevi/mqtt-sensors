@@ -117,6 +117,7 @@ auto_capped = False
 contention_since = None
 last_step = 0.0
 clear_since = None
+fast_rampup = False
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -305,11 +306,12 @@ def attributed_power(paused, hr10):
     return min(power_w, f * full_intensity_max_w)
 
 def handle_contention(n, mt, f, hr10):
-    global auto_capped, contention_since, last_step, clear_since
+    global auto_capped, contention_since, last_step, clear_since, fast_rampup
     now = time.monotonic()
     rel = hr10 / plateau_hr
     if n > 0 and power_w >= 0.9 * f * full_intensity_max_w and rel < 0.8 * f:
         clear_since = None
+        fast_rampup = False
         if contention_since is None:
             contention_since = now
         if now - contention_since >= 15.0 and now - last_step >= 10.0:
@@ -324,11 +326,12 @@ def handle_contention(n, mt, f, hr10):
         return
     if clear_since is None:
         clear_since = now
-    if now - clear_since >= 300.0:
-        print("xmrig_status: contention cleared, back to 100%", flush=True)
-        set_threads(mt)
-        auto_capped = False
-        clear_since = None
+    if now - clear_since >= (60.0 if fast_rampup else 300.0):
+        print(f"xmrig_status: no contention, {n} -> {n + 1}", flush=True)
+        set_threads(n + 1)
+        fast_rampup = n + 1 < mt
+        auto_capped = fast_rampup
+        clear_since = now
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
