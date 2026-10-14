@@ -293,7 +293,7 @@ class MiningIntensity:
             if self.clear_since is not None:
                 self.clear_since = now
         rel = hr10 / self.plateau_hr
-        if n > 0 and power_w >= 0.9 * f * self.baseline_w and rel < 0.95 * f:
+        if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < 0.95 * f:
             self.clear_since = None
             self.calm_since = None
             if self.fast_rampup:

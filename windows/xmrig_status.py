@@ -181,20 +181,14 @@ def ensure_baseline():
     cpu = active_cpu()
     profile_key = cpu["profile"]
     cfg = get_config()
-    profile = cfg["cpu"][profile_key]
-    n_back = len(cpu.get("threads") or [])
-    if isinstance(profile, list):
-        n_prof = len(profile)
-    elif isinstance(profile, dict):
-        n_prof = int(profile["threads"])
-    else:
-        n_prof = 0
-    max_threads = n_prof if n_prof > 0 else n_back
-    baseline_profile = json.loads(json.dumps(profile))
+    max_threads = os.cpu_count()
+    baseline_profile = json.loads(json.dumps(cfg["cpu"][profile_key]))
+    print(f"xmrig_status: max threads {max_threads} (logical CPUs), {core_step} per core, profile {profile_key} running {len(cpu.get('threads') or [])}", flush=True)
 
 def intensity_threads(n):
     if isinstance(baseline_profile, list):
-        return baseline_profile[:n]
+        pad = [-1 if isinstance(t, int) else [t[0], -1] for t in baseline_profile[-1:]] * n
+        return (baseline_profile + pad)[:n]
     out = dict(baseline_profile)
     out["threads"] = n
     return out
