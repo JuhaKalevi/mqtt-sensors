@@ -1,40 +1,55 @@
 # mqtt-sensors
 
-Long-lived root processes that publish host stats to MQTT with Home Assistant discovery. One process per collector; each holds open a source or polls one in-process. No framework, no `requirements.txt`, no pip.
+Long-lived root processes that publish host stats to MQTT with Home Assistant discovery. One process per collector; each holds one source open or polls one in-process. No framework, no `requirements.txt`, no pip.
 
-Collectors on a host share one HA device named after the hostname (`linux_host_<hostname>`), except device-scoped power-supply batteries, which get their own HA device linked with `via_device`. Screenshots: farmer host `M710q` (CPU RAPL + farm size), and miner host `B850Pro` (package/GPU power, XMRig hashrate/switch/reject + profitability factor). Recompute and harvester processing times land on whichever machine actually runs those processes.
+- [SECURITY.md](SECURITY.md): supply-chain / root policy.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): fail-fast and minimalism.
+- [AGENT.md](AGENT.md): contract for coding agents adding a sensor (an `AGENTS.md`).
+- [windows/](windows/README.md): Windows power and XMRig collectors plus a tray launcher.
+
+Collectors on a host share one HA device `linux_host_<hostname>`, named after the host. Device-scoped power-supply batteries get their own HA device linked with `via_device`.
 
 ![Home Assistant — M710q](screen.png)
 
 ![Home Assistant — B850Pro](screen2.png)
 
-[SECURITY.md](SECURITY.md) is the supply-chain / root policy. [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is fail-fast / minimalism. [AGENT.md](AGENT.md) is the contract for coding agents adding a sensor — same role as an `AGENTS.md`. You can ignore it. Windows CPU/GPU copies of the Linux power collectors live in [windows/](windows/README.md).
-
 ## Collectors
 
 | collector | what HA shows | source (held open) |
 |---|---|---|
-| `cpu_package_power.py` | package power (W) and energy (kWh, RAM only, resets on start) | RAPL `energy_uj` fd |
-| `nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` |
-| `windows/cpu_package_power.py` | package power (W) and energy (kWh, RAM only) | LibreHardwareMonitor HTTP `GET /data.json` (`LHM_URL`) |
-| `windows/nvidia_gpu_power.py` | per-GPU power and energy | one `nvidia-smi --loop=1` (no `select`) |
-| `chia_farm_size.py` | plots, on-disk TiB, effective TiB, estimated netspace EiB, ETA to win (s) | farmer `:8559` + full node `:8555` TLS |
-| `chia_recompute_server_processing_time.py` | recompute processing time (s, full precision, display 1 decimal) | `journalctl -u chia_recompute_server -f` |
-| `chia_harvester_processing_time.py` | harvester processing time (s, full precision, display 1 decimal) and plot count | uid 1000 `debug.log` fd, reopen on daily rotate |
-| `loginctl_active_users.py` | comma-separated users with `active` or `online` logind sessions | `/run/systemd/users` (what `loginctl` reads; no spawn) |
-| `lightdm_active.py` | switch: LightDM unit running; start/stop only with `LIGHTDM_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/lightdm.service` (no `systemctl` to read state) |
-| `ollama_active.py` | switch: Ollama unit running; start/stop only with `OLLAMA_SWITCH_MODE=control` | `/sys/fs/cgroup/system.slice/ollama.service` (no `systemctl` to read state) |
-| `hwmon_drive_temperature.py` | per-drive temperature (°C): `drivetemp`/`nvme` hwmon, else in-process SAT (SG_IO) SMART for `sd*` incl. USB; drives reporting standby are not read | `/sys/class/hwmon` polled every 60 s (`DRIVE_TEMPERATURE_INTERVAL`); `temp1_input` fd held while the node exists |
-| `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply` polled each second; `capacity` fd held while the node exists |
-| `xmrig_status.py` | hashrate (H/s, 60s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor (revenue/cost) | XMRig HTTP + MQTT inputs; intensity-attributed mining_W; remembers hashrate/W while paused |
-| `support/xmr_eur_price.py` | XMR/EUR spot (EUR) | held HTTPS to Kraken public ticker, 60 s |
-| `support/xmr_network.py` | Monero difficulty, network hashrate (H/s), block reward (XMR), XMR/H/s/day | held HTTPS to xmrchain.net, 60 s |
+| `cpu_package_power.py` | package power (W), energy (kWh) | RAPL `energy_uj` fd |
+| `nvidia_gpu_power.py` | per-GPU power (W), energy (kWh) | one `nvidia-smi --loop=1` |
+| `chia_farm_size.py` | plots, on-disk TiB, effective TiB, netspace EiB, ETA to win (s) | farmer `:8559` + full node `:8555` TLS |
+| `chia_recompute_server_processing_time.py` | recompute processing time (s) | `journalctl -u chia_recompute_server -f` |
+| `chia_harvester_processing_time.py` | harvester processing time (s), plot count | uid 1000 `debug.log` fd, reopened on daily rotate |
+| `loginctl_active_users.py` | comma-separated users with `active`/`online` sessions | `/run/systemd/users` |
+| `lightdm_active.py` | switch: LightDM running | `lightdm.service` cgroup dir |
+| `ollama_active.py` | switch: Ollama running | `ollama.service` cgroup dir |
+| `hwmon_drive_temperature.py` | per-drive temperature (°C) | `/sys/class/hwmon` + SAT `SG_IO`, every 60 s |
+| `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply`, each second |
+| `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
+| `support/xmr_eur_price.py` | XMR/EUR (EUR) | Kraken public ticker, 60 s |
+| `support/xmr_network.py` | Monero difficulty, network hashrate (H/s), block reward (XMR), XMR/H/s/day | xmrchain.net, 60 s |
 
-Run only the collectors that apply. GPU is a no-op without `nvidia-smi`. Farm needs a local farmer and full node. Recompute needs `chia_recompute_server` in the journal. Harvester follows `plots were eligible for farming … Time: N s. Total N plots` in `debug.log` (via `chia_root()`). Chia paths are uid 1000's `.chia/mainnet`, never `/root` and never a username. Power supply batteries are any sysfs node with `type=Battery` and a `capacity` file (Logitech `hidpp_battery_*`, laptop `BAT*`, and the like). The collector rescans that class dir each second so plug/unplug is picked up without a restart, and clears retained discovery when a node disappears. `scope=System` (laptop/UPS) stays on the host HA device; other scopes get their own HA device via the host so a mouse battery does not claim the host device battery badge. Nodes with the same `model_name` are one battery, so plugging that mouse in by cable does not add another entity, and discovery that was keyed by the sysfs directory name is cleared. XMRig needs its HTTP API on localhost (`XMRIG_HOST`/`XMRIG_PORT`/`XMRIG_TOKEN` in `.env`); the mining switch and intensity slider require `http.restricted=false` (XMRig is read-only or full write — there is no pause-only ACL). Intensity is an MQTT `number` (0–100%, slider): `N = floor(percent * max_threads / 100)` on the active CPU profile via `GET/PUT /2/config` (baseline `max_threads` cached once before the first change from profile length / backends); 0% is zero threads, not pause. With XMRig `autosave` on, intensity can persist to `config.json`. Reject ratio is `(shares_total - shares_good) / shares_total`. Without a spot €/kWh source, `xmrig_status` stays at basic mining stats. Default spot source is Home Assistant entity `sensor.porssisahko_electricity_price` (override with `HA_ELECTRICITY_ENTITY`) when `HA_TOKEN` is set (`HA_URL` defaults to `http://127.0.0.1:8123`, polled every 60 s). Alternatives: `ELECTRICITY_EUR_PER_KWH_TOPIC` (MQTT) or fixed `ELECTRICITY_EUR_PER_KWH`. It also waits for retained MQTT from package power, `xmr_per_hs_day`, and XMR/EUR before publishing the factor. Factor is `revenue/cost` (1.0 ≈ break-even). Publish-only — no default automation. Power cost uses intensity-attributed `mining_W` (raw `package_W` until ~5 min cumulative at 100% intensity establishes `baseline_max_package_W` once; then `package_W` at 100%, `min(package_W, f * baseline_max)` only when `f < 1`; ~every 5 min at 100%, if the rolling ~15 min full-intensity max differs by more than ±5%, update baseline to that max; intensity 0 → 0). While paused, last mining hashrate and attributed mining watts stay in RAM. `support/` holds helpers that are not host metrics (global MQTT object ids, no hostname): `xmr_eur_price.py` publishes Kraken’s XMR/EUR last trade; `xmr_network.py` publishes Monero difficulty, network hashrate, last-block reward, and XMR per H/s per day (`reward * 86400 / difficulty`) for hashrate profitability. Expected XMR/day ≈ local hashrate × that rate.
+Run only the collectors that apply. Energy is `total_increasing` kWh integrated in RAM and resets on start; HA expects that. Processing times publish full precision with 1 decimal displayed; do not average.
 
-Energy is `total_increasing` kWh integrated in RAM; HA expects it to start at 0. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2 s–5 s is normal — do not average. Harvester samples once per signage point (~every 9 s); a gap or a time climbing toward the signage window is the error signal.
+- **Chia:** paths are uid 1000's `.chia/mainnet` (`chia_root()`), never `/root` or a username. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2–5 s is normal. Harvester parses `plots were eligible for farming … Time: N s. Total N plots`, about every 9 s; a gap or a time climbing toward the signage window is the error signal.
+- **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; retained discovery is cleared when a node disappears. `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
+- **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`).
 
-Topics: `$MQTT_PREFIX/sensor/<object>/{config,state}` (default prefix `homeassistant`). Binary sensors use `binary_sensor/<object>/…`. Availability is per collector: `gpu_power_<host>`, `chia_farm_<host>`, `chia_recompute_server_<host>`, `chia_harvester_<host>`, `loginctl_<host>`, `lightdm_<host>` (under `binary_sensor/`, kept from before it became a switch), `ollama_<host>`, `power_supply_<host>`, `hwmon_drive_temperature_<host>`, `xmrig_<host>`, `xmr_eur_<host>`, `xmr_network_<host>`. Switches use `$MQTT_PREFIX/switch/<object>/{config,state,set}`. Numbers use `$MQTT_PREFIX/number/<object>/{config,state,set}`.
+Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
+
+## XMRig
+
+Needs the XMRig HTTP API (`XMRIG_HOST`/`XMRIG_PORT`, `XMRIG_TOKEN` when set). The mining switch and intensity slider need `http.restricted=false` (XMRig has no pause-only ACL).
+
+- **Switch:** `ON` resumes, `OFF` pauses.
+- **Intensity:** threads = `floor(percent * max_threads / 100)` on the active CPU profile via `GET/PUT /2/config`; `max_threads` is cached once from the profile or backends. 0% is zero threads, not pause. With XMRig `autosave`, it persists to `config.json`.
+- **Reject ratio:** `(shares_total - shares_good) / shares_total`.
+- **Profitability factor:** `revenue / cost` (1.0 ≈ break-even), revenue `hashrate * xmr_per_hs_day / 24 * xmr_eur`, cost `mining_W / 1000 * €/kWh`. Needs a spot price source (see Configuration) plus retained MQTT package power, `xmr_per_hs_day` and XMR/EUR; missing inputs are printed once a minute. Publish-only, no automation.
+- **Mining power:** raw `package_W` until a 100%-intensity baseline exists. The baseline is the max `package_W` over the first ~5 min at 100% (not paused), or `XMRIG_POWER_BASELINE_W` right away until those 5 min are measured. Then `package_W` at 100%, `min(package_W, f * baseline)` when `f = threads/max_threads < 1`, 0 at 0%. Every ~5 min at 100%, if the rolling ~15 min max differs by more than ±5%, the baseline becomes that max. While paused, the last hashrate and mining watts are kept in RAM.
+
+Windows adds automatic contention handling ([windows/README.md](windows/README.md)).
 
 ## loginctl active users
 
@@ -165,11 +180,9 @@ The collector only reads sysfs and does not apply the quirk. An administrator ca
 
 Why not `smartctl -d sat`: a root subprocess per sample and a new package (AGENT.md, SECURITY.md), and it would send the same commands.
 
-## Run
+## Configuration
 
-As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`.
-
-`.env` in the working directory, or the environment:
+`.env` in the working directory (or the environment). Empty means unset.
 
 ```
 MQTT_HOST=localhost
@@ -177,19 +190,61 @@ MQTT_PORT=1883
 MQTT_USER=
 MQTT_PASS=
 MQTT_PREFIX=homeassistant
+
 XMRIG_HOST=127.0.0.1
 XMRIG_PORT=44444
 XMRIG_TOKEN=
+XMRIG_POWER_BASELINE_W=
+XMRIG_HASHRATE_PLATEAU_HS=
 XMRIG_CONTENTION_MODE=
+
 HA_URL=http://127.0.0.1:8123
 HA_TOKEN=
 HA_ELECTRICITY_ENTITY=sensor.porssisahko_electricity_price
 ELECTRICITY_EUR_PER_KWH_TOPIC=
 ELECTRICITY_EUR_PER_KWH=
+
 LIGHTDM_SWITCH_MODE=read_only
 OLLAMA_SWITCH_MODE=read_only
+
 DRIVE_TEMPERATURE_INTERVAL=60
 DRIVE_TEMPERATURE_DEBUG=
+
+LHM_URL=
 ```
 
-Matching `*.service` stubs: `ExecStart`, `WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`. Enable the ones you want as system units.
+| variable | meaning |
+|---|---|
+| **MQTT** | |
+| `MQTT_HOST`, `MQTT_PORT` | broker (default `localhost:1883`) |
+| `MQTT_USER`, `MQTT_PASS` | broker credentials, optional |
+| `MQTT_PREFIX` | discovery prefix (default `homeassistant`) |
+| **XMRig** | |
+| `XMRIG_HOST`, `XMRIG_PORT` | XMRig HTTP API (default `127.0.0.1:44444`) |
+| `XMRIG_TOKEN` | XMRig HTTP bearer token, optional |
+| `XMRIG_POWER_BASELINE_W` | 100%-intensity package power hint (W), used until measured; must be present, may be empty |
+| `XMRIG_HASHRATE_PLATEAU_HS` | Windows only: 100%-intensity 10 s hashrate hint (H/s), used until measured; must be present, may be empty |
+| `XMRIG_CONTENTION_MODE` | Windows only: `control` enables automatic thread reduction; must be present, empty is off |
+| **Electricity price** (topic or fixed; HA only when neither is set) | |
+| `ELECTRICITY_EUR_PER_KWH_TOPIC` | MQTT topic with €/kWh |
+| `ELECTRICITY_EUR_PER_KWH` | fixed €/kWh |
+| `HA_TOKEN` | HA long-lived token; enables polling `HA_ELECTRICITY_ENTITY` every 60 s |
+| `HA_URL` | HA base URL (default `http://127.0.0.1:8123`) |
+| `HA_ELECTRICITY_ENTITY` | HA spot price entity (default `sensor.porssisahko_electricity_price`) |
+| **Unit switches** | |
+| `LIGHTDM_SWITCH_MODE`, `OLLAMA_SWITCH_MODE` | `read_only` (default) or `control` (start/stop the unit) |
+| **Drive temperature** | |
+| `DRIVE_TEMPERATURE_INTERVAL` | seconds between reads (default 60) |
+| `DRIVE_TEMPERATURE_DEBUG` | `1` prints SG_IO diagnostics |
+| **Windows** | |
+| `LHM_URL` | LibreHardwareMonitor web server origin, required by `windows/cpu_package_power.py` |
+
+## Run
+
+As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`. Each collector has a matching `*.service` (`WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`); enable the ones you want as system units:
+
+```
+systemctl enable --now /root/mqtt-sensors/xmrig_status.service
+```
+
+Upgrading a host: `cd /root/mqtt-sensors && git pull`, add any new `.env` keys from the example above (`XMRIG_POWER_BASELINE_W`, and on Windows `XMRIG_HASHRATE_PLATEAU_HS` and `XMRIG_CONTENTION_MODE`, are read directly and must be present), then restart the enabled units, e.g. `systemctl restart xmrig_status lightdm_active`.

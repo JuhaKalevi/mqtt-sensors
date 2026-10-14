@@ -1,41 +1,36 @@
 # Windows
 
-Linux collectors at the repo root are the reference for what we publish. These scripts copy that contract and do not share the read path. Shared code is `mqtt_common.py` only (dotenv, hostname, discovery, client).
+The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is `mqtt_common.py` only. Object ids, topics and availability match Linux (`cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, `xmrig_*_<hostname>`), so a Windows miner feeds the same MQTT names. The HA device id is `windows_host_<hostname>` (display name is the hostname).
 
-Sensor object ids match Linux: `cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, plus the matching `_energy` sensors, and `xmrig_hashrate_<hostname>`, `xmrig_reject_ratio_<hostname>`, `xmrig_mining_<hostname>`, `xmrig_intensity_<hostname>`, `xmrig_profitability_factor_<hostname>`. Availability topics match too (`cpu_package_power_<hostname>`, `gpu_power_<hostname>`, `xmrig_<hostname>`). A Windows miner therefore feeds the same MQTT names as a Linux one, including XMRig profitability’s package-power topic.
+Relaxed exception: a program already on the machine may be a source. No vendored driver, no pip. Fail-fast still applies.
 
-The HA device id is `windows_host_<hostname>`, not `linux_host_<hostname>`, so a Windows box does not claim a Linux device. The display name is still the hostname.
+## Run
 
-This folder is the relaxed exception. An extra program already on the machine is allowed. No vendored driver, no pip, no OS branches in the Linux scripts. Fail-fast still applies: if the source is missing, the process exits. There are no systemd units. Double-click `windows/tray.pyw` (no console). The menu lists every collector script here except the tray; a tick enables it (kept running with a short restart backoff like systemd `Restart=on-failure`, no error dialog on exit), untick stops it, and quit stops the ones the tray started. A ✓ on the label means that process is running now; the tray icon switches to `tray_warn.ico` while any enabled collector is down. Stdout/stderr append under `windows/logs/<name>.log`. Ticks are remembered in `windows/tray_enabled.txt`. The menu opens the repo-root `.env` and exits if that file is missing.
+Double-click `windows/tray.pyw` (no console). Configuration is the repo-root `.env` (see the [root README](../README.md#configuration)). The menu opens the repo-root `.env` and exits if that file is missing. The scripts `chdir` to the repo root.
 
-Run from anywhere. The scripts `chdir` to the repo root so `.env` loads the same way as the Linux units (`WorkingDirectory`).
+- The menu lists every collector here; a tick enables it and keeps it running (short restart backoff, like `Restart=on-failure`), untick stops it, quit stops what the tray started.
+- ✓ on a label: running now. Icon `tray_warn.ico`: an enabled collector is down.
+- Output appends to `windows/logs/<name>.log`; ticks are kept in `windows/tray_enabled.txt`.
+
+Upgrading: `git pull`, add any new `.env` keys from the root example, then quit and restart the tray.
 
 ## CPU
 
-`cpu_package_power.py` polls LibreHardwareMonitor’s HTTP server once a second (`GET /data.json`). `LHM_URL` is the server origin (`http://host:port`) and is required. The Power sensor is `CPU Package`, or `Package` on an AMD CPU (`RawValue`, watts). Energy is watts × dt in RAM, published as kWh, same units as the RAPL collector.
-
-Prerequisite: LibreHardwareMonitor running with the remote web server enabled. Not WMI. Not PDH. Not an MSR driver in this repo.
-
-```
-python windows/cpu_package_power.py
-```
+`cpu_package_power.py` polls LibreHardwareMonitor's web server (`GET /data.json` on `LHM_URL`, required) once a second. Power is the `CPU Package` sensor, or `Package` on AMD (`RawValue`, W); energy is integrated in RAM as kWh. Needs LibreHardwareMonitor running with the remote web server enabled.
 
 ## GPU
 
-`nvidia_gpu_power.py` uses the same `nvidia-smi --query-gpu=index,name,power.draw --format=csv,noheader,nounits --loop=1` query as Linux. It does not use `select()` (that does not work on Windows pipes). A one-shot query counts GPUs; each sample is that many lines.
-
-Prerequisite: NVIDIA driver, `nvidia-smi` on `PATH`.
-
-```
-python windows/nvidia_gpu_power.py
-```
+`nvidia_gpu_power.py` runs the same `nvidia-smi --query-gpu=index,name,power.draw --format=csv,noheader,nounits --loop=1` as Linux, without `select()` (no Windows pipe support). A one-shot query counts GPUs. Needs the NVIDIA driver and `nvidia-smi` on `PATH`.
 
 ## XMRig
 
-`xmrig_status.py` polls XMRig’s HTTP API (`GET /2/summary`, `POST /json_rpc`, `GET /2/backends`, `GET`/`PUT /2/config`) on one held connection. No console program. `XMRIG_HOST` and `XMRIG_PORT` default to `127.0.0.1` and `44444`; `XMRIG_TOKEN` is sent when set. Hashrate, reject ratio, mining switch, and intensity slider match the Linux objects. The profitability factor is published when the same inputs exist (package power, `xmr_per_hs_day`, XMR/EUR, and a spot price); mining power is intensity-attributed like Linux once a full-intensity baseline exists. The switch and intensity need `http.restricted=false`. Intensity can persist to XMRig `config.json` when autosave is on. If XMRig is not reachable the process exits.
+`xmrig_status.py` matches the Linux collector (switch, intensity, reject ratio, profitability, mining power attribution; see the root README) on one held HTTP connection. The switch and intensity need `http.restricted=false`.
 
-`XMRIG_CONTENTION_MODE` must be in `.env`; `control` enables automatic contention handling, anything else (empty) leaves it off. The first ~5 min at full intensity set the power baseline and a hashrate plateau (max 10 s hashrate); both then follow the same ±5% / 5 min drift check against the rolling ~15 min max. Contention is package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.8 * f` (`f = threads/max_threads`). After 15 s of that, threads drop to `round(relative hashrate * max_threads)` (at least one less), re-checked every 10 s, so the slider settles within about a minute. Only when the drop was automatic: 5 min without contention adds one thread and sets a fast-rampup flag; while the flag holds, each further uncontested minute adds one more thread until 100%. Contention clears the flag, the drop logic applies, and the next recovery waits 5 min again. A slider command cancels the automatic state. The intensity slider shows the thread count XMRig really runs.
+Baseline and plateau: the first ~5 min at 100% intensity set the power baseline (max package W) and the hashrate plateau (max 10 s hashrate). `XMRIG_POWER_BASELINE_W` and `XMRIG_HASHRATE_PLATEAU_HS` act as those values from the start until the 5 min are measured, so a game started right after boot does not skew them. Afterwards both follow the ±5% drift check every ~5 min against the rolling ~15 min max.
 
-```
-python windows/xmrig_status.py
-```
+Contention handling, with `XMRIG_CONTENTION_MODE=control` and once both values exist (`f = threads/max_threads`):
+
+- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.8 * f`, for 15 s.
+- **Drop:** threads go to `round(relative hashrate * max_threads)` (at least one fewer), re-checked every 10 s; settles within about a minute.
+- **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag and the next recovery waits 5 min again.
+- A slider command cancels the automatic state. The slider always shows the threads XMRig really runs.
