@@ -55,9 +55,9 @@ Plateau and hints: the first ~5 min at 100% intensity set the power baseline (ma
 
 Contention handling, with `XMRIG_CONTENTION_MODE=control` and once both values exist (`f = threads/max_threads`):
 
-- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.9 * f`, for 15 s.
+- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.95 * f`, for 15 s. For 30 s after any thread change (automatic or manual) detection and clearing are skipped so the 10 s hashrate can settle.
 - **Drop:** while contention lasts, threads drop once a minute by the logical threads per physical core (XMRig `/2/summary` `cpu.threads // cpu.cores`, usually 2 with SMT, 1 without), never below that step size.
-- **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag and the next recovery waits 5 min again.
+- **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag. The highest contended thread count is remembered; when contention returns at or below it after a raise, that count is remembered instead and the recovery wait doubles (5, 10, 20 min, …). While backed off, fast rampup still steps every minute except the step to the remembered count, which waits the full backed-off time. 15 min at 100% without contention, or a manual slider move, resets the wait to 5 min and forgets the count.
 - A slider command cancels the automatic state. The slider always shows the threads XMRig really runs.
 
 ## loginctl active users

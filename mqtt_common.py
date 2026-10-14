@@ -221,12 +221,26 @@ class MiningIntensity:
         self.contention_since = None
         self.clear_since = None
         self.last_step = 0.0
+        self.last_n = None
+        self.settle_until = 0.0
+        self.contended_max = 0
+        self.wait = 300.0
+        self.raised = False
+        self.calm_since = None
 
     def manual(self, percent):
         if self.auto_capped:
             log(f"manual slider {percent}%, automatic contention state cancelled")
         self.auto_capped = False
         self.fast_rampup = False
+        self.reset_backoff("manual slider")
+
+    def reset_backoff(self, why):
+        if self.contended_max or self.wait > 300.0:
+            log(f"recovery backoff reset ({why}), wait 300 s")
+        self.contended_max = 0
+        self.wait = 300.0
+        self.raised = False
 
     def sample(self, now, paused, n, mt, step, power_w, hr10, set_threads):
         if not paused and mt > 0 and n == mt and power_w > 0:
@@ -260,15 +274,29 @@ class MiningIntensity:
         return min(power_w, f * self.baseline_w)
 
     def contend(self, now, n, mt, step, f, power_w, hr10, set_threads):
+        if n != self.last_n:
+            self.last_n = n
+            self.settle_until = now + 30.0
+        if now < self.settle_until:
+            return
         rel = hr10 / self.plateau_hr
-        if n > 0 and power_w >= 0.9 * f * self.baseline_w and rel < 0.9 * f:
+        if n > 0 and power_w >= 0.9 * f * self.baseline_w and rel < 0.95 * f:
             self.clear_since = None
+            self.calm_since = None
             if self.fast_rampup:
                 log("fast rampup cleared by contention")
             self.fast_rampup = False
             if self.contention_since is None:
                 self.contention_since = now
                 log(f"contention detected: power {power_w:.1f} W vs expected {f * self.baseline_w:.1f} W, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
+                if self.raised and n <= self.contended_max:
+                    self.wait *= 2
+                    self.contended_max = n
+                    log(f"raise to {n} failed, recovery wait now {self.wait:.0f} s, remembered contended thread count {n}")
+                elif n > self.contended_max:
+                    self.contended_max = n
+                    log(f"remembered contended thread count {n}")
+                self.raised = False
             if n > step and now - self.contention_since >= 15.0 and now - self.last_step >= 60.0:
                 target = max(step, n - step)
                 log(f"auto drop, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}: threads {n} -> {target}")
@@ -277,14 +305,22 @@ class MiningIntensity:
                 self.last_step = now
             return
         self.contention_since = None
+        if n >= mt and not self.auto_capped:
+            if self.calm_since is None:
+                self.calm_since = now
+            if now - self.calm_since >= 900.0 and (self.contended_max or self.wait > 300.0):
+                self.reset_backoff("15 min calm at 100%")
         if not self.auto_capped:
             return
+        slow = not self.fast_rampup or (self.wait > 300.0 and n + 1 == self.contended_max)
+        delay = self.wait if slow else 60.0
         if self.clear_since is None:
             self.clear_since = now
-            log(f"contention cleared at {n}/{mt} threads, raise in {60 if self.fast_rampup else 300} s")
-        if now - self.clear_since >= (60.0 if self.fast_rampup else 300.0):
+            log(f"contention cleared at {n}/{mt} threads, raise in {delay:.0f} s (remembered contended count {self.contended_max})")
+        if now - self.clear_since >= delay:
             log(f"auto raise, {now - self.clear_since:.0f} s without contention: threads {n} -> {n + 1}")
             set_threads(n, n + 1)
+            self.raised = True
             self.clear_since = now
             if n + 1 >= mt:
                 log(f"recovery complete at 100% ({mt} threads)")
