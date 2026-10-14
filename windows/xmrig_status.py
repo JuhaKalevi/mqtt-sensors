@@ -111,11 +111,13 @@ pending_intensity = None
 full_intensity_samples = 0
 POWER_HINT = os.environ["XMRIG_POWER_BASELINE_W"]
 full_intensity_max_w = float(POWER_HINT or 0)
+power_hinted = bool(POWER_HINT)
 establish_max_w = 0.0
 full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
 PLATEAU_HINT = os.environ["XMRIG_HASHRATE_PLATEAU_HS"]
 plateau_hr = float(PLATEAU_HINT or 0)
+plateau_hinted = bool(PLATEAU_HINT)
 establish_hr = 0.0
 plateau_window = deque(maxlen=900)
 auto_capped = False
@@ -283,8 +285,15 @@ def inputs_ready():
     )
 
 
+def take_measured(label, unit, hinted, current, measured):
+    if hinted and abs(measured - current) > 0.05 * current:
+        print(f"xmrig_status: measured {label} {measured:.1f} {unit} rejected, outside ±5% of hint {current:.1f} {unit}", flush=True)
+        return current, True
+    print(f"xmrig_status: full-intensity {label} {measured:.1f} {unit}" + (f", replaces hint {current:.1f} {unit}" if hinted else ""), flush=True)
+    return measured, False
+
 def attributed_power(paused, hr10):
-    global full_intensity_samples, full_intensity_max_w, last_baseline_check, establish_max_w, plateau_hr, establish_hr
+    global full_intensity_samples, full_intensity_max_w, last_baseline_check, establish_max_w, power_hinted, plateau_hr, establish_hr, plateau_hinted
     if power_w is None:
         return None
     ensure_baseline()
@@ -298,13 +307,8 @@ def attributed_power(paused, hr10):
             establish_hr = max(establish_hr, hr10)
             establish_max_w = max(establish_max_w, power_w)
             if full_intensity_samples == 300:
-                if POWER_HINT:
-                    print(f"xmrig_status: power hint {POWER_HINT} W replaced by measured {establish_max_w:.1f} W", flush=True)
-                if PLATEAU_HINT:
-                    print(f"xmrig_status: plateau hint {PLATEAU_HINT} H/s replaced by measured {establish_hr:.0f} H/s", flush=True)
-                full_intensity_max_w = establish_max_w
-                plateau_hr = establish_hr
-                print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W, plateau {plateau_hr:.0f} H/s", flush=True)
+                full_intensity_max_w, power_hinted = take_measured("power baseline", "W", power_hinted, full_intensity_max_w, establish_max_w)
+                plateau_hr, plateau_hinted = take_measured("hashrate plateau", "H/s", plateau_hinted, plateau_hr, establish_hr)
                 last_baseline_check = time.monotonic()
         else:
             now = time.monotonic()
@@ -312,12 +316,10 @@ def attributed_power(paused, hr10):
                 last_baseline_check = now
                 recent_max = max(full_intensity_window)
                 if recent_max < full_intensity_max_w * 0.95 or recent_max > full_intensity_max_w * 1.05:
-                    full_intensity_max_w = recent_max
-                    print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                    full_intensity_max_w, power_hinted = take_measured("power baseline", "W", power_hinted, full_intensity_max_w, recent_max)
                 recent_hr = max(plateau_window)
                 if recent_hr < plateau_hr * 0.95 or recent_hr > plateau_hr * 1.05:
-                    plateau_hr = recent_hr
-                    print(f"xmrig_status: full-intensity hashrate plateau {plateau_hr:.0f} H/s", flush=True)
+                    plateau_hr, plateau_hinted = take_measured("hashrate plateau", "H/s", plateau_hinted, plateau_hr, recent_hr)
     if full_intensity_max_w <= 0 or mt <= 0:
         return power_w
     f = n / mt
@@ -333,7 +335,7 @@ def handle_contention(n, mt, f, hr10):
     global auto_capped, contention_since, last_step, clear_since, fast_rampup
     now = time.monotonic()
     rel = hr10 / plateau_hr
-    if n > 0 and power_w >= 0.9 * f * full_intensity_max_w and rel < 0.8 * f:
+    if n > 0 and power_w >= 0.9 * f * full_intensity_max_w and rel < 0.9 * f:
         clear_since = None
         if fast_rampup:
             print("xmrig_status: fast rampup cleared by contention", flush=True)

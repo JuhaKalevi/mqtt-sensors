@@ -113,6 +113,7 @@ pending_intensity = None
 full_intensity_samples = 0
 POWER_HINT = os.environ["XMRIG_POWER_BASELINE_W"]
 full_intensity_max_w = float(POWER_HINT or 0)
+power_hinted = bool(POWER_HINT)
 establish_max_w = 0.0
 full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
@@ -288,8 +289,15 @@ def missing_inputs(eff_hr, eff_power):
     return missing
 
 
+def take_measured(label, unit, hinted, current, measured):
+    if hinted and abs(measured - current) > 0.05 * current:
+        print(f"xmrig_status: measured {label} {measured:.1f} {unit} rejected, outside ±5% of hint {current:.1f} {unit}", flush=True)
+        return current, True
+    print(f"xmrig_status: full-intensity {label} {measured:.1f} {unit}" + (f", replaces hint {current:.1f} {unit}" if hinted else ""), flush=True)
+    return measured, False
+
 def attributed_power(paused):
-    global full_intensity_samples, full_intensity_max_w, last_baseline_check, establish_max_w
+    global full_intensity_samples, full_intensity_max_w, last_baseline_check, establish_max_w, power_hinted
     if power_w is None:
         return None
     ensure_baseline()
@@ -301,10 +309,7 @@ def attributed_power(paused):
             full_intensity_samples += 1
             establish_max_w = max(establish_max_w, power_w)
             if full_intensity_samples == 300:
-                if POWER_HINT:
-                    print(f"xmrig_status: power hint {POWER_HINT} W replaced by measured {establish_max_w:.1f} W", flush=True)
-                full_intensity_max_w = establish_max_w
-                print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                full_intensity_max_w, power_hinted = take_measured("power baseline", "W", power_hinted, full_intensity_max_w, establish_max_w)
                 last_baseline_check = time.monotonic()
         else:
             now = time.monotonic()
@@ -312,8 +317,7 @@ def attributed_power(paused):
                 last_baseline_check = now
                 recent_max = max(full_intensity_window)
                 if recent_max < full_intensity_max_w * 0.95 or recent_max > full_intensity_max_w * 1.05:
-                    full_intensity_max_w = recent_max
-                    print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                    full_intensity_max_w, power_hinted = take_measured("power baseline", "W", power_hinted, full_intensity_max_w, recent_max)
     if full_intensity_max_w <= 0 or mt <= 0:
         return power_w
     f = n / mt
