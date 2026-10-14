@@ -290,14 +290,14 @@ def attributed_power(paused):
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
     mt = max_threads or 0
-    ready = full_intensity_samples >= 900 and mt > 0
+    ready = full_intensity_samples >= 300 and mt > 0
     if not paused and mt > 0 and n == mt and power_w > 0:
         full_intensity_window.append(power_w)
         if not ready:
             full_intensity_samples += 1
             if power_w > full_intensity_max_w:
                 full_intensity_max_w = power_w
-            if full_intensity_samples == 900:
+            if full_intensity_samples == 300:
                 print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
                 last_baseline_check = time.monotonic()
                 ready = True
