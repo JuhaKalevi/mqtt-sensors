@@ -34,6 +34,8 @@ python windows/nvidia_gpu_power.py
 
 `xmrig_status.py` polls XMRig’s HTTP API (`GET /2/summary`, `POST /json_rpc`, `GET /2/backends`, `GET`/`PUT /2/config`) on one held connection. No console program. `XMRIG_HOST` and `XMRIG_PORT` default to `127.0.0.1` and `44444`; `XMRIG_TOKEN` is sent when set. Hashrate, reject ratio, mining switch, and intensity slider match the Linux objects. The profitability factor is published when the same inputs exist (package power, `xmr_per_hs_day`, XMR/EUR, and a spot price); mining power is intensity-attributed like Linux once a full-intensity baseline exists. The switch and intensity need `http.restricted=false`. Intensity can persist to XMRig `config.json` when autosave is on. If XMRig is not reachable the process exits.
 
+`XMRIG_CONTENTION_MODE` must be in `.env`; `control` enables automatic contention handling, anything else (empty) leaves it off. The ~15 min full-intensity window that sets the power baseline also sets a hashrate plateau (max 10 s hashrate), updated on the same ±5% / 5 min drift check. Contention is package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.8 * f` (`f = threads/max_threads`). After 15 s of that, threads drop to `round(relative hashrate * max_threads)` (at least one less), re-checked every 10 s, so the slider settles within about a minute. Only when the drop was automatic: 5 min without contention sets threads back to 100%. A slider command cancels the automatic state. The intensity slider shows the thread count XMRig really runs.
+
 ```
 python windows/xmrig_status.py
 ```

@@ -28,6 +28,7 @@ HA_URL = os.getenv("HA_URL", "http://127.0.0.1:8123").rstrip("/")
 HA_TOKEN = os.getenv("HA_TOKEN") or None
 HA_SPOT_ENTITY = os.getenv("HA_ELECTRICITY_ENTITY", "sensor.porssisahko_electricity_price")
 HA_SPOT = HA_TOKEN is not None and SPOT_TOPIC is None and SPOT_FIXED is None
+CONTENTION = os.environ["XMRIG_CONTENTION_MODE"] == "control"
 PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None or HA_TOKEN is not None
 
 OBJ_HR = f"xmrig_hashrate_{HOSTNAME}"
@@ -110,6 +111,12 @@ full_intensity_samples = 0
 full_intensity_max_w = 0.0
 full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
+plateau_hr = 0.0
+plateau_window = deque(maxlen=900)
+auto_capped = False
+contention_since = None
+last_step = 0.0
+clear_since = None
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -197,9 +204,13 @@ def intensity_threads(n):
     return out
 
 def apply_intensity(percent):
+    global auto_capped
     ensure_baseline()
+    auto_capped = False
     percent = max(0, min(100, int(percent)))
-    n = percent * max_threads // 100
+    set_threads(percent * max_threads // 100)
+
+def set_threads(n):
     cfg = get_config()
     cfg["cpu"][profile_key] = intensity_threads(n)
     put_config(cfg)
@@ -250,8 +261,8 @@ def inputs_ready():
     )
 
 
-def attributed_power(paused):
-    global full_intensity_samples, full_intensity_max_w, last_baseline_check
+def attributed_power(paused, hr10):
+    global full_intensity_samples, full_intensity_max_w, last_baseline_check, plateau_hr
     if power_w is None:
         return None
     ensure_baseline()
@@ -260,12 +271,14 @@ def attributed_power(paused):
     ready = full_intensity_samples >= 900 and mt > 0
     if not paused and mt > 0 and n == mt and power_w > 0:
         full_intensity_window.append(power_w)
+        plateau_window.append(hr10)
         if not ready:
             full_intensity_samples += 1
+            plateau_hr = max(plateau_hr, hr10)
             if power_w > full_intensity_max_w:
                 full_intensity_max_w = power_w
             if full_intensity_samples == 900:
-                print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W, plateau {plateau_hr:.0f} H/s", flush=True)
                 last_baseline_check = time.monotonic()
                 ready = True
         else:
@@ -276,14 +289,46 @@ def attributed_power(paused):
                 if recent_max < full_intensity_max_w * 0.95 or recent_max > full_intensity_max_w * 1.05:
                     full_intensity_max_w = recent_max
                     print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
+                recent_hr = max(plateau_window)
+                if recent_hr < plateau_hr * 0.95 or recent_hr > plateau_hr * 1.05:
+                    plateau_hr = recent_hr
+                    print(f"xmrig_status: full-intensity hashrate plateau {plateau_hr:.0f} H/s", flush=True)
     if not ready or mt <= 0:
         return power_w
     f = n / mt
+    if CONTENTION and not paused:
+        handle_contention(n, mt, f, hr10)
     if f <= 0:
         return 0.0
     if f >= 1:
         return power_w
     return min(power_w, f * full_intensity_max_w)
+
+def handle_contention(n, mt, f, hr10):
+    global auto_capped, contention_since, last_step, clear_since
+    now = time.monotonic()
+    rel = hr10 / plateau_hr
+    if n > 0 and power_w >= 0.9 * f * full_intensity_max_w and rel < 0.8 * f:
+        clear_since = None
+        if contention_since is None:
+            contention_since = now
+        if now - contention_since >= 15.0 and now - last_step >= 10.0:
+            target = min(n - 1, round(rel * mt))
+            print(f"xmrig_status: contention {rel:.2f} of plateau at {f:.2f} threads, {n} -> {target}", flush=True)
+            set_threads(target)
+            auto_capped = True
+            last_step = now
+        return
+    contention_since = None
+    if not auto_capped:
+        return
+    if clear_since is None:
+        clear_since = now
+    if now - clear_since >= 300.0:
+        print("xmrig_status: contention cleared, back to 100%", flush=True)
+        set_threads(mt)
+        auto_capped = False
+        clear_since = None
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
@@ -300,9 +345,12 @@ def publish_stats(data):
     shares = int(data["results"]["shares_total"])
     rej = 0.0 if shares == 0 else (shares - good) * 100.0 / shares
     paused = bool(data["paused"])
+    hr10 = float(total[0] or 0)
     client.publish(STATE_HR, format(hr, ".15g"), retain=True)
     client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
     client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
+    if CONTENTION and not PROFIT_WANTED:
+        attributed_power(paused, hr10)
     client.publish(STATE_INT, str(current_intensity_percent()), retain=True)
     if not PROFIT_WANTED:
         return
@@ -315,7 +363,7 @@ def publish_stats(data):
         last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
-    mining_w = attributed_power(paused)
+    mining_w = attributed_power(paused, hr10)
     if not paused:
         if mining_w is not None and mining_w > 0:
             last_power = mining_w
@@ -339,8 +387,9 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_INT, json.dumps(DISCOVERY_INT), retain=True)
         client.subscribe(CMD_SW)
         client.subscribe(CMD_INT)
-        if PROFIT_WANTED:
+        if PROFIT_WANTED or CONTENTION:
             client.subscribe(TOPIC_POWER)
+        if PROFIT_WANTED:
             client.subscribe(TOPIC_RATE)
             client.subscribe(TOPIC_EUR)
             if SPOT_TOPIC:
@@ -360,8 +409,6 @@ def on_message(client, userdata, msg):
         return
     if topic == CMD_INT:
         pending_intensity = int(float(payload))
-        return
-    if not PROFIT_WANTED:
         return
     if topic == TOPIC_POWER:
         power_w = float(payload)
