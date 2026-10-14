@@ -31,6 +31,6 @@ Baseline and plateau: the first ~5 min at 100% intensity set the power baseline 
 Contention handling, with `XMRIG_CONTENTION_MODE=control` and once both values exist (`f = threads/max_threads`):
 
 - **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.8 * f`, for 15 s.
-- **Drop:** threads go to `round(relative hashrate * max_threads)` (at least one fewer), re-checked every 10 s; settles within about a minute.
+- **Drop:** while contention lasts, threads drop once a minute by the logical threads per physical core (XMRig `/2/summary` `cpu.threads // cpu.cores`, usually 2 with SMT, 1 without), never below that step size.
 - **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag and the next recovery waits 5 min again.
 - A slider command cancels the automatic state. The slider always shows the threads XMRig really runs.

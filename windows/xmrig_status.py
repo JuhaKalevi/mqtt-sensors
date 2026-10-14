@@ -106,6 +106,7 @@ last_ha_spot = 0.0
 max_threads = None
 baseline_profile = None
 profile_key = None
+core_step = None
 pending_intensity = None
 full_intensity_samples = 0
 full_intensity_max_w = float(os.environ["XMRIG_POWER_BASELINE_W"] or 0)
@@ -182,9 +183,11 @@ def active_cpu():
     raise KeyError("cpu")
 
 def ensure_baseline():
-    global max_threads, baseline_profile, profile_key
+    global max_threads, baseline_profile, profile_key, core_step
     if max_threads is not None:
         return
+    info = summary()["cpu"]
+    core_step = info["threads"] // info["cores"]
     cpu = active_cpu()
     profile_key = cpu["profile"]
     cfg = get_config()
@@ -315,8 +318,8 @@ def handle_contention(n, mt, f, hr10):
         fast_rampup = False
         if contention_since is None:
             contention_since = now
-        if now - contention_since >= 15.0 and now - last_step >= 10.0:
-            target = min(n - 1, round(rel * mt))
+        if n > core_step and now - contention_since >= 15.0 and now - last_step >= 60.0:
+            target = max(core_step, n - core_step)
             print(f"xmrig_status: contention {rel:.2f} of plateau at {f:.2f} threads, {n} -> {target}", flush=True)
             set_threads(target)
             auto_capped = True
