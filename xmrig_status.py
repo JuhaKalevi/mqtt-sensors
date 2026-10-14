@@ -111,7 +111,8 @@ baseline_profile = None
 profile_key = None
 pending_intensity = None
 full_intensity_samples = 0
-full_intensity_max_w = float(os.environ["XMRIG_POWER_BASELINE_W"] or 0)
+POWER_HINT = os.environ["XMRIG_POWER_BASELINE_W"]
+full_intensity_max_w = float(POWER_HINT or 0)
 establish_max_w = 0.0
 full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
@@ -121,6 +122,9 @@ def auth_headers():
     if XMRIG_TOKEN:
         h["Authorization"] = f"Bearer {XMRIG_TOKEN}"
     return h
+
+if POWER_HINT:
+    print(f"xmrig_status: using power baseline hint {POWER_HINT} W", flush=True)
 
 conn = http.client.HTTPConnection(XMRIG_HOST, XMRIG_PORT, timeout=5)
 conn.connect()
@@ -297,6 +301,8 @@ def attributed_power(paused):
             full_intensity_samples += 1
             establish_max_w = max(establish_max_w, power_w)
             if full_intensity_samples == 300:
+                if POWER_HINT:
+                    print(f"xmrig_status: power hint {POWER_HINT} W replaced by measured {establish_max_w:.1f} W", flush=True)
                 full_intensity_max_w = establish_max_w
                 print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W", flush=True)
                 last_baseline_check = time.monotonic()

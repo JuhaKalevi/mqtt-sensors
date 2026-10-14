@@ -109,11 +109,13 @@ profile_key = None
 core_step = None
 pending_intensity = None
 full_intensity_samples = 0
-full_intensity_max_w = float(os.environ["XMRIG_POWER_BASELINE_W"] or 0)
+POWER_HINT = os.environ["XMRIG_POWER_BASELINE_W"]
+full_intensity_max_w = float(POWER_HINT or 0)
 establish_max_w = 0.0
 full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
-plateau_hr = float(os.environ["XMRIG_HASHRATE_PLATEAU_HS"] or 0)
+PLATEAU_HINT = os.environ["XMRIG_HASHRATE_PLATEAU_HS"]
+plateau_hr = float(PLATEAU_HINT or 0)
 establish_hr = 0.0
 plateau_window = deque(maxlen=900)
 auto_capped = False
@@ -210,9 +212,12 @@ def intensity_threads(n):
     return out
 
 def apply_intensity(percent):
-    global auto_capped
+    global auto_capped, fast_rampup
     ensure_baseline()
+    if auto_capped:
+        print(f"xmrig_status: manual slider {percent}%, automatic contention state cancelled", flush=True)
     auto_capped = False
+    fast_rampup = False
     percent = max(0, min(100, int(percent)))
     set_threads(percent * max_threads // 100)
 
@@ -220,6 +225,17 @@ def set_threads(n):
     cfg = get_config()
     cfg["cpu"][profile_key] = intensity_threads(n)
     put_config(cfg)
+
+def auto_threads(n, target, reason):
+    print(f"xmrig_status: auto {reason}: threads {n} -> {target}", flush=True)
+    try:
+        set_threads(target)
+    except BaseException as err:
+        print(f"xmrig_status: XMRig thread change {n} -> {target} failed: {err!r}", flush=True)
+        raise
+    info = client.publish(STATE_INT, str(target * 100 // max_threads), retain=True)
+    if info.rc != 0:
+        print(f"xmrig_status: intensity slider publish failed rc={info.rc}", flush=True)
 
 def current_intensity_percent():
     cpu = active_cpu()
@@ -282,6 +298,10 @@ def attributed_power(paused, hr10):
             establish_hr = max(establish_hr, hr10)
             establish_max_w = max(establish_max_w, power_w)
             if full_intensity_samples == 300:
+                if POWER_HINT:
+                    print(f"xmrig_status: power hint {POWER_HINT} W replaced by measured {establish_max_w:.1f} W", flush=True)
+                if PLATEAU_HINT:
+                    print(f"xmrig_status: plateau hint {PLATEAU_HINT} H/s replaced by measured {establish_hr:.0f} H/s", flush=True)
                 full_intensity_max_w = establish_max_w
                 plateau_hr = establish_hr
                 print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W, plateau {plateau_hr:.0f} H/s", flush=True)
@@ -315,13 +335,15 @@ def handle_contention(n, mt, f, hr10):
     rel = hr10 / plateau_hr
     if n > 0 and power_w >= 0.9 * f * full_intensity_max_w and rel < 0.8 * f:
         clear_since = None
+        if fast_rampup:
+            print("xmrig_status: fast rampup cleared by contention", flush=True)
         fast_rampup = False
         if contention_since is None:
             contention_since = now
+            print(f"xmrig_status: contention detected: power {power_w:.1f} W vs expected {f * full_intensity_max_w:.1f} W, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}", flush=True)
         if n > core_step and now - contention_since >= 15.0 and now - last_step >= 60.0:
             target = max(core_step, n - core_step)
-            print(f"xmrig_status: contention {rel:.2f} of plateau at {f:.2f} threads, {n} -> {target}", flush=True)
-            set_threads(target)
+            auto_threads(n, target, f"drop, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
             auto_capped = True
             last_step = now
         return
@@ -330,12 +352,19 @@ def handle_contention(n, mt, f, hr10):
         return
     if clear_since is None:
         clear_since = now
+        print(f"xmrig_status: contention cleared at {n}/{mt} threads, raise in {60 if fast_rampup else 300} s", flush=True)
     if now - clear_since >= (60.0 if fast_rampup else 300.0):
-        print(f"xmrig_status: no contention, {n} -> {n + 1}", flush=True)
-        set_threads(n + 1)
-        fast_rampup = n + 1 < mt
-        auto_capped = fast_rampup
+        auto_threads(n, n + 1, f"raise, {now - clear_since:.0f} s without contention")
         clear_since = now
+        if n + 1 >= mt:
+            print(f"xmrig_status: recovery complete at 100% ({mt} threads)", flush=True)
+            if fast_rampup:
+                print("xmrig_status: fast rampup cleared at 100%", flush=True)
+            fast_rampup = False
+            auto_capped = False
+        elif not fast_rampup:
+            fast_rampup = True
+            print("xmrig_status: fast rampup set, next raise in 60 s", flush=True)
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
@@ -425,6 +454,11 @@ def on_message(client, userdata, msg):
         xmr_eur = float(payload)
     elif SPOT_TOPIC and topic == SPOT_TOPIC:
         spot = float(payload)
+
+if POWER_HINT:
+    print(f"xmrig_status: using power baseline hint {POWER_HINT} W", flush=True)
+if PLATEAU_HINT:
+    print(f"xmrig_status: using hashrate plateau hint {PLATEAU_HINT} H/s", flush=True)
 
 conn = http.client.HTTPConnection(XMRIG_HOST, XMRIG_PORT, timeout=5)
 try:
