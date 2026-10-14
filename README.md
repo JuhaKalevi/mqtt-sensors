@@ -44,7 +44,7 @@ Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `c
 Needs the XMRig HTTP API (`XMRIG_HOST`/`XMRIG_PORT`, `XMRIG_TOKEN` when set). The mining switch and intensity slider need `http.restricted=false` (XMRig has no pause-only ACL).
 
 - **Switch:** `ON` resumes, `OFF` pauses.
-- **Intensity:** threads = `floor(percent * max_threads / 100)` on the active CPU profile via `GET/PUT /2/config`; `max_threads` is cached once from the profile or backends. 0% is zero threads, not pause. With XMRig `autosave`, it persists to `config.json`.
+- **Intensity:** threads = `floor(percent * max_threads / 100)` on the active CPU profile via `GET/PUT /2/config`; `max_threads` is cached once from the profile or backends. The minimum is 1 thread (0% sets 1); the mining switch pauses. With XMRig `autosave`, it persists to `config.json`.
 - **Reject ratio:** `(shares_total - shares_good) / shares_total`.
 - **Profitability factor:** `revenue / cost` (1.0 ≈ break-even), revenue `hashrate * xmr_per_hs_day / 24 * xmr_eur`, cost `mining_W / 1000 * €/kWh`. Needs a spot price source (see Configuration) plus retained MQTT package power, `xmr_per_hs_day` and XMR/EUR; missing inputs are printed once a minute. Publish-only, no automation.
 - **Mining power:** raw `package_W` until a 100%-intensity baseline exists. The baseline is the max `package_W` over the first ~5 min at 100% (not paused), or `XMRIG_POWER_BASELINE_W` right away (see Plateau and hints). Then `package_W` at 100%, `min(package_W, f * baseline)` when `f = threads/max_threads < 1`, 0 at 0%. While paused, the last hashrate and mining watts are kept in RAM.
@@ -55,8 +55,8 @@ Plateau and hints: the first ~5 min at 100% intensity set the power baseline (ma
 
 Contention handling, with `XMRIG_CONTENTION_MODE=control` and once both values exist (`f = threads/max_threads`):
 
-- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.95 * f`, for 15 s. For 30 s after any thread change (automatic or manual) detection and clearing are skipped so the 10 s hashrate can settle.
-- **Drop:** while contention lasts, threads drop once a minute by the logical threads per physical core (XMRig `/2/summary` `cpu.threads // cpu.cores`, usually 2 with SMT, 1 without), never below that step size.
+- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.95 * f`, for 15 s. After any thread change (automatic or manual) the hashrate is settling until the 10 s hashrate grows less than 2% over 10 s (max 90 s); detection and clearing are skipped meanwhile, and the drop and recovery timers count from the end of settling.
+- **Drop:** while contention lasts, threads drop once a minute by the logical threads per physical core (XMRig `/2/summary` `cpu.threads // cpu.cores`, usually 2 with SMT, 1 without), never below 1 thread.
 - **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag. The highest contended thread count is remembered; when contention returns at or below it after a raise, that count is remembered instead and the recovery wait doubles (5, 10, 20 min, …). While backed off, fast rampup still steps every minute except the step to the remembered count, which waits the full backed-off time. 15 min at 100% without contention, or a manual slider move, resets the wait to 5 min and forgets the count.
 - A slider command cancels the automatic state. The slider always shows the threads XMRig really runs.
 

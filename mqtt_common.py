@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
 import os, json, socket, subprocess
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 import paho.mqtt.client as mqtt
@@ -200,7 +201,6 @@ def take_measured(label, unit, hinted, current, measured):
 
 class MiningIntensity:
     def __init__(self, power_hint, plateau_hint, contention):
-        from collections import deque
         self.contention = contention
         self.baseline_w = float(power_hint or 0)
         self.power_hinted = bool(power_hint)
@@ -222,7 +222,9 @@ class MiningIntensity:
         self.clear_since = None
         self.last_step = 0.0
         self.last_n = None
-        self.settle_until = 0.0
+        self.settling = False
+        self.settle_start = 0.0
+        self.settle_hr = deque(maxlen=11)
         self.contended_max = 0
         self.wait = 300.0
         self.raised = False
@@ -276,9 +278,20 @@ class MiningIntensity:
     def contend(self, now, n, mt, step, f, power_w, hr10, set_threads):
         if n != self.last_n:
             self.last_n = n
-            self.settle_until = now + 30.0
-        if now < self.settle_until:
-            return
+            self.settling = True
+            self.settle_start = now
+            self.settle_hr.clear()
+        if self.settling:
+            self.settle_hr.append(hr10)
+            flat = len(self.settle_hr) == 11 and 0 < max(self.settle_hr) <= self.settle_hr[0] * 1.02
+            if not flat and now - self.settle_start < 90.0:
+                return
+            self.settling = False
+            log(f"settled at {n} threads after {now - self.settle_start:.0f} s, hashrate {hr10:.0f} H/s")
+            self.contention_since = None
+            self.last_step = now
+            if self.clear_since is not None:
+                self.clear_since = now
         rel = hr10 / self.plateau_hr
         if n > 0 and power_w >= 0.9 * f * self.baseline_w and rel < 0.95 * f:
             self.clear_since = None
@@ -297,8 +310,8 @@ class MiningIntensity:
                     self.contended_max = n
                     log(f"remembered contended thread count {n}")
                 self.raised = False
-            if n > step and now - self.contention_since >= 15.0 and now - self.last_step >= 60.0:
-                target = max(step, n - step)
+            if n > 1 and now - self.contention_since >= 15.0 and now - self.last_step >= 60.0:
+                target = max(1, n - step)
                 log(f"auto drop, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}: threads {n} -> {target}")
                 set_threads(n, target)
                 self.auto_capped = True

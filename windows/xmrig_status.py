@@ -203,7 +203,7 @@ def apply_intensity(percent):
     ensure_baseline()
     MINING.manual(percent)
     percent = max(0, min(100, int(percent)))
-    set_threads(percent * max_threads // 100)
+    set_threads(max(1, percent * max_threads // 100))
 
 def set_threads(n):
     cfg = get_config()
