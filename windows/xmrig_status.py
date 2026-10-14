@@ -108,10 +108,12 @@ baseline_profile = None
 profile_key = None
 pending_intensity = None
 full_intensity_samples = 0
-full_intensity_max_w = 0.0
+full_intensity_max_w = float(os.environ["XMRIG_POWER_BASELINE_W"] or 0)
+establish_max_w = 0.0
 full_intensity_window = deque(maxlen=900)
 last_baseline_check = 0.0
-plateau_hr = 0.0
+plateau_hr = float(os.environ["XMRIG_HASHRATE_PLATEAU_HS"] or 0)
+establish_hr = 0.0
 plateau_window = deque(maxlen=900)
 auto_capped = False
 contention_since = None
@@ -263,25 +265,24 @@ def inputs_ready():
 
 
 def attributed_power(paused, hr10):
-    global full_intensity_samples, full_intensity_max_w, last_baseline_check, plateau_hr
+    global full_intensity_samples, full_intensity_max_w, last_baseline_check, establish_max_w, plateau_hr, establish_hr
     if power_w is None:
         return None
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
     mt = max_threads or 0
-    ready = full_intensity_samples >= 300 and mt > 0
     if not paused and mt > 0 and n == mt and power_w > 0:
         full_intensity_window.append(power_w)
         plateau_window.append(hr10)
-        if not ready:
+        if full_intensity_samples < 300:
             full_intensity_samples += 1
-            plateau_hr = max(plateau_hr, hr10)
-            if power_w > full_intensity_max_w:
-                full_intensity_max_w = power_w
+            establish_hr = max(establish_hr, hr10)
+            establish_max_w = max(establish_max_w, power_w)
             if full_intensity_samples == 300:
+                full_intensity_max_w = establish_max_w
+                plateau_hr = establish_hr
                 print(f"xmrig_status: full-intensity power baseline {full_intensity_max_w:.1f} W, plateau {plateau_hr:.0f} H/s", flush=True)
                 last_baseline_check = time.monotonic()
-                ready = True
         else:
             now = time.monotonic()
             if now - last_baseline_check >= 300.0:
@@ -294,10 +295,10 @@ def attributed_power(paused, hr10):
                 if recent_hr < plateau_hr * 0.95 or recent_hr > plateau_hr * 1.05:
                     plateau_hr = recent_hr
                     print(f"xmrig_status: full-intensity hashrate plateau {plateau_hr:.0f} H/s", flush=True)
-    if not ready or mt <= 0:
+    if full_intensity_max_w <= 0 or mt <= 0:
         return power_w
     f = n / mt
-    if CONTENTION and not paused:
+    if CONTENTION and not paused and plateau_hr > 0:
         handle_contention(n, mt, f, hr10)
     if f <= 0:
         return 0.0
