@@ -229,6 +229,8 @@ class MiningIntensity:
         self.wait = 300.0
         self.raised = False
         self.calm_since = None
+        self.balanced = False
+        self.low_since = None
 
     def manual(self, percent):
         if self.auto_capped:
@@ -296,6 +298,9 @@ class MiningIntensity:
         if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < 0.95 * f:
             self.clear_since = None
             self.calm_since = None
+            if self.balanced:
+                self.balanced = False
+                log(f"leaving balanced at {n}/{mt} threads: hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
             if self.fast_rampup:
                 log("fast rampup cleared by contention")
             self.fast_rampup = False
@@ -325,6 +330,21 @@ class MiningIntensity:
                 self.reset_backoff("15 min calm at 100%")
         if not self.auto_capped:
             return
+        limit = 1.10 * f * self.baseline_w
+        if power_w > limit:
+            self.low_since = None
+            if not self.balanced:
+                self.balanced = True
+                self.clear_since = None
+                log(f"balanced at {n}/{mt} threads, holding: power {power_w:.1f} W above {limit:.1f} W, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
+            return
+        if self.balanced:
+            if self.low_since is None:
+                self.low_since = now
+            if now - self.low_since < 30.0:
+                return
+            self.balanced = False
+            log(f"leaving balanced at {n}/{mt} threads: power {power_w:.1f} W at or below {limit:.1f} W for 30 s")
         slow = not self.fast_rampup or (self.wait > 300.0 and n + 1 == self.contended_max)
         delay = self.wait if slow else 60.0
         if self.clear_since is None:
