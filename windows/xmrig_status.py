@@ -265,7 +265,7 @@ def attributed_power(paused, hr10):
         return None
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
-    return MINING.sample(time.monotonic(), paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads)
+    return MINING.sample(time.monotonic(), paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads, None)
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:

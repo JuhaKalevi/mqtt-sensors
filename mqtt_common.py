@@ -231,6 +231,7 @@ class MiningIntensity:
         self.calm_since = None
         self.balanced = False
         self.low_since = None
+        self.load_exit = False
 
     def manual(self, percent):
         if self.auto_capped:
@@ -246,7 +247,7 @@ class MiningIntensity:
         self.wait = 300.0
         self.raised = False
 
-    def sample(self, now, paused, n, mt, step, power_w, hr10, set_threads):
+    def sample(self, now, paused, n, mt, step, power_w, hr10, set_threads, load):
         if not paused and mt > 0 and n == mt and power_w > 0:
             self.power_window.append(power_w)
             self.hr_window.append(hr10)
@@ -270,14 +271,14 @@ class MiningIntensity:
             return power_w
         f = n / mt
         if self.contention and not paused and self.plateau_hr > 0:
-            self.contend(now, n, mt, step, f, power_w, hr10, set_threads)
+            self.contend(now, n, mt, step, f, power_w, hr10, set_threads, load)
         if f <= 0:
             return 0.0
         if f >= 1:
             return power_w
         return min(power_w, f * self.baseline_w)
 
-    def contend(self, now, n, mt, step, f, power_w, hr10, set_threads):
+    def contend(self, now, n, mt, step, f, power_w, hr10, set_threads, load):
         if n != self.last_n:
             self.last_n = n
             self.settling = True
@@ -298,6 +299,7 @@ class MiningIntensity:
         if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < 0.95 * f:
             self.clear_since = None
             self.calm_since = None
+            self.load_exit = False
             if self.balanced:
                 self.balanced = False
                 log(f"leaving balanced at {n}/{mt} threads: hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
@@ -331,7 +333,12 @@ class MiningIntensity:
         if not self.auto_capped:
             return
         limit = 1.10 * f * self.baseline_w
-        if power_w > limit:
+        if self.balanced and load is not None and int(load) <= n:
+            self.balanced = False
+            self.load_exit = True
+            self.low_since = None
+            log(f"leaving balanced at {n}/{mt} threads: 5 min load {load:.2f} (floor {int(load)}) <= {n} threads")
+        if power_w > limit and not self.load_exit:
             self.low_since = None
             if not self.balanced:
                 self.balanced = True
