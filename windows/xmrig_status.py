@@ -4,13 +4,12 @@
 Linux reference: xmrig_status.py. Same object ids and HA meaning. HTTP only.
 """
 import json, os, sys, time, http.client
-from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
 from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_switch_discovery, make_number_discovery, create_client
+    get_hostname, get_mqtt_settings, make_switch_discovery, make_number_discovery, create_client, MiningIntensity
 )
 
 HOSTNAME = get_hostname()
@@ -28,7 +27,6 @@ HA_URL = os.getenv("HA_URL", "http://127.0.0.1:8123").rstrip("/")
 HA_TOKEN = os.getenv("HA_TOKEN") or None
 HA_SPOT_ENTITY = os.getenv("HA_ELECTRICITY_ENTITY", "sensor.porssisahko_electricity_price")
 HA_SPOT = HA_TOKEN is not None and SPOT_TOPIC is None and SPOT_FIXED is None
-CONTENTION = os.environ["XMRIG_CONTENTION_MODE"] == "control"
 PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None or HA_TOKEN is not None
 
 OBJ_HR = f"xmrig_hashrate_{HOSTNAME}"
@@ -108,23 +106,11 @@ baseline_profile = None
 profile_key = None
 core_step = None
 pending_intensity = None
-full_intensity_samples = 0
-POWER_HINT = os.environ["XMRIG_POWER_BASELINE_W"]
-full_intensity_max_w = float(POWER_HINT or 0)
-power_hinted = bool(POWER_HINT)
-establish_max_w = 0.0
-full_intensity_window = deque(maxlen=900)
-last_baseline_check = 0.0
-PLATEAU_HINT = os.environ["XMRIG_HASHRATE_PLATEAU_HS"]
-plateau_hr = float(PLATEAU_HINT or 0)
-plateau_hinted = bool(PLATEAU_HINT)
-establish_hr = 0.0
-plateau_window = deque(maxlen=900)
-auto_capped = False
-contention_since = None
-last_step = 0.0
-clear_since = None
-fast_rampup = False
+MINING = MiningIntensity(
+    os.environ["XMRIG_POWER_BASELINE_W"],
+    os.environ["XMRIG_HASHRATE_PLATEAU_HS"],
+    os.environ["XMRIG_CONTENTION_MODE"] == "control",
+)
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -214,12 +200,8 @@ def intensity_threads(n):
     return out
 
 def apply_intensity(percent):
-    global auto_capped, fast_rampup
     ensure_baseline()
-    if auto_capped:
-        print(f"xmrig_status: manual slider {percent}%, automatic contention state cancelled", flush=True)
-    auto_capped = False
-    fast_rampup = False
+    MINING.manual(percent)
     percent = max(0, min(100, int(percent)))
     set_threads(percent * max_threads // 100)
 
@@ -228,8 +210,7 @@ def set_threads(n):
     cfg["cpu"][profile_key] = intensity_threads(n)
     put_config(cfg)
 
-def auto_threads(n, target, reason):
-    print(f"xmrig_status: auto {reason}: threads {n} -> {target}", flush=True)
+def auto_threads(n, target):
     try:
         set_threads(target)
     except BaseException as err:
@@ -285,88 +266,12 @@ def inputs_ready():
     )
 
 
-def take_measured(label, unit, hinted, current, measured):
-    if hinted and abs(measured - current) > 0.05 * current:
-        print(f"xmrig_status: measured {label} {measured:.1f} {unit} rejected, outside ±5% of hint {current:.1f} {unit}", flush=True)
-        return current, True
-    print(f"xmrig_status: full-intensity {label} {measured:.1f} {unit}" + (f", replaces hint {current:.1f} {unit}" if hinted else ""), flush=True)
-    return measured, False
-
 def attributed_power(paused, hr10):
-    global full_intensity_samples, full_intensity_max_w, last_baseline_check, establish_max_w, power_hinted, plateau_hr, establish_hr, plateau_hinted
     if power_w is None:
         return None
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
-    mt = max_threads or 0
-    if not paused and mt > 0 and n == mt and power_w > 0:
-        full_intensity_window.append(power_w)
-        plateau_window.append(hr10)
-        if full_intensity_samples < 300:
-            full_intensity_samples += 1
-            establish_hr = max(establish_hr, hr10)
-            establish_max_w = max(establish_max_w, power_w)
-            if full_intensity_samples == 300:
-                full_intensity_max_w, power_hinted = take_measured("power baseline", "W", power_hinted, full_intensity_max_w, establish_max_w)
-                plateau_hr, plateau_hinted = take_measured("hashrate plateau", "H/s", plateau_hinted, plateau_hr, establish_hr)
-                last_baseline_check = time.monotonic()
-        else:
-            now = time.monotonic()
-            if now - last_baseline_check >= 300.0:
-                last_baseline_check = now
-                recent_max = max(full_intensity_window)
-                if recent_max < full_intensity_max_w * 0.95 or recent_max > full_intensity_max_w * 1.05:
-                    full_intensity_max_w, power_hinted = take_measured("power baseline", "W", power_hinted, full_intensity_max_w, recent_max)
-                recent_hr = max(plateau_window)
-                if recent_hr < plateau_hr * 0.95 or recent_hr > plateau_hr * 1.05:
-                    plateau_hr, plateau_hinted = take_measured("hashrate plateau", "H/s", plateau_hinted, plateau_hr, recent_hr)
-    if full_intensity_max_w <= 0 or mt <= 0:
-        return power_w
-    f = n / mt
-    if CONTENTION and not paused and plateau_hr > 0:
-        handle_contention(n, mt, f, hr10)
-    if f <= 0:
-        return 0.0
-    if f >= 1:
-        return power_w
-    return min(power_w, f * full_intensity_max_w)
-
-def handle_contention(n, mt, f, hr10):
-    global auto_capped, contention_since, last_step, clear_since, fast_rampup
-    now = time.monotonic()
-    rel = hr10 / plateau_hr
-    if n > 0 and power_w >= 0.9 * f * full_intensity_max_w and rel < 0.9 * f:
-        clear_since = None
-        if fast_rampup:
-            print("xmrig_status: fast rampup cleared by contention", flush=True)
-        fast_rampup = False
-        if contention_since is None:
-            contention_since = now
-            print(f"xmrig_status: contention detected: power {power_w:.1f} W vs expected {f * full_intensity_max_w:.1f} W, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}", flush=True)
-        if n > core_step and now - contention_since >= 15.0 and now - last_step >= 60.0:
-            target = max(core_step, n - core_step)
-            auto_threads(n, target, f"drop, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
-            auto_capped = True
-            last_step = now
-        return
-    contention_since = None
-    if not auto_capped:
-        return
-    if clear_since is None:
-        clear_since = now
-        print(f"xmrig_status: contention cleared at {n}/{mt} threads, raise in {60 if fast_rampup else 300} s", flush=True)
-    if now - clear_since >= (60.0 if fast_rampup else 300.0):
-        auto_threads(n, n + 1, f"raise, {now - clear_since:.0f} s without contention")
-        clear_since = now
-        if n + 1 >= mt:
-            print(f"xmrig_status: recovery complete at 100% ({mt} threads)", flush=True)
-            if fast_rampup:
-                print("xmrig_status: fast rampup cleared at 100%", flush=True)
-            fast_rampup = False
-            auto_capped = False
-        elif not fast_rampup:
-            fast_rampup = True
-            print("xmrig_status: fast rampup set, next raise in 60 s", flush=True)
+    return MINING.sample(time.monotonic(), paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads)
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
@@ -387,7 +292,7 @@ def publish_stats(data):
     client.publish(STATE_HR, format(hr, ".15g"), retain=True)
     client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
     client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
-    if CONTENTION and not PROFIT_WANTED:
+    if MINING.contention and not PROFIT_WANTED:
         attributed_power(paused, hr10)
     client.publish(STATE_INT, str(current_intensity_percent()), retain=True)
     if not PROFIT_WANTED:
@@ -425,7 +330,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_INT, json.dumps(DISCOVERY_INT), retain=True)
         client.subscribe(CMD_SW)
         client.subscribe(CMD_INT)
-        if PROFIT_WANTED or CONTENTION:
+        if PROFIT_WANTED or MINING.contention:
             client.subscribe(TOPIC_POWER)
         if PROFIT_WANTED:
             client.subscribe(TOPIC_RATE)
@@ -456,11 +361,6 @@ def on_message(client, userdata, msg):
         xmr_eur = float(payload)
     elif SPOT_TOPIC and topic == SPOT_TOPIC:
         spot = float(payload)
-
-if POWER_HINT:
-    print(f"xmrig_status: using power baseline hint {POWER_HINT} W", flush=True)
-if PLATEAU_HINT:
-    print(f"xmrig_status: using hashrate plateau hint {PLATEAU_HINT} H/s", flush=True)
 
 conn = http.client.HTTPConnection(XMRIG_HOST, XMRIG_PORT, timeout=5)
 try:

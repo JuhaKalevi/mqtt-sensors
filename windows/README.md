@@ -26,11 +26,4 @@ Upgrading: `git pull`, add any new `.env` keys from the root example, then quit 
 
 `xmrig_status.py` matches the Linux collector (switch, intensity, reject ratio, profitability, mining power attribution; see the root README) on one held HTTP connection. The switch and intensity need `http.restricted=false`.
 
-Baseline and plateau: the first ~5 min at 100% intensity set the power baseline (max package W) and the hashrate plateau (max 10 s hashrate). `XMRIG_POWER_BASELINE_W` and `XMRIG_HASHRATE_PLATEAU_HS` act as those values from the start until the 5 min are measured, so a game started right after boot does not skew them. While a hint is current, a measured value (5 min establishment or drift) replaces it only within ±5% of it; otherwise the measurement is rejected and logged. Set hints close to the true values: a hint more than 5% off is never replaced. Afterwards both follow the ±5% drift check every ~5 min against the rolling ~15 min max.
-
-Contention handling, with `XMRIG_CONTENTION_MODE=control` and once both values exist (`f = threads/max_threads`):
-
-- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.9 * f`, for 15 s.
-- **Drop:** while contention lasts, threads drop once a minute by the logical threads per physical core (XMRig `/2/summary` `cpu.threads // cpu.cores`, usually 2 with SMT, 1 without), never below that step size.
-- **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag and the next recovery waits 5 min again.
-- A slider command cancels the automatic state. The slider always shows the threads XMRig really runs.
+Baseline, plateau, hints and contention handling are shared with Linux (`MiningIntensity` in `mqtt_common.py`); see the [root README](../README.md#xmrig).

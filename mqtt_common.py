@@ -187,3 +187,111 @@ def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     if will_topic:
         client.will_set(will_topic, will_payload, qos=1, retain=True)
     return client
+
+def log(msg):
+    print(f"xmrig_status: {msg}", flush=True)
+
+def take_measured(label, unit, hinted, current, measured):
+    if hinted and abs(measured - current) > 0.05 * current:
+        log(f"measured {label} {measured:.1f} {unit} rejected, outside ±5% of hint {current:.1f} {unit}")
+        return current, True
+    log(f"full-intensity {label} {measured:.1f} {unit}" + (f", replaces hint {current:.1f} {unit}" if hinted else ""))
+    return measured, False
+
+class MiningIntensity:
+    def __init__(self, power_hint, plateau_hint, contention):
+        from collections import deque
+        self.contention = contention
+        self.baseline_w = float(power_hint or 0)
+        self.power_hinted = bool(power_hint)
+        self.plateau_hr = float(plateau_hint or 0)
+        self.plateau_hinted = bool(plateau_hint)
+        if power_hint:
+            log(f"using power baseline hint {power_hint} W")
+        if plateau_hint:
+            log(f"using hashrate plateau hint {plateau_hint} H/s")
+        self.samples = 0
+        self.establish_w = 0.0
+        self.establish_hr = 0.0
+        self.power_window = deque(maxlen=900)
+        self.hr_window = deque(maxlen=900)
+        self.last_check = 0.0
+        self.auto_capped = False
+        self.fast_rampup = False
+        self.contention_since = None
+        self.clear_since = None
+        self.last_step = 0.0
+
+    def manual(self, percent):
+        if self.auto_capped:
+            log(f"manual slider {percent}%, automatic contention state cancelled")
+        self.auto_capped = False
+        self.fast_rampup = False
+
+    def sample(self, now, paused, n, mt, step, power_w, hr10, set_threads):
+        if not paused and mt > 0 and n == mt and power_w > 0:
+            self.power_window.append(power_w)
+            self.hr_window.append(hr10)
+            if self.samples < 300:
+                self.samples += 1
+                self.establish_w = max(self.establish_w, power_w)
+                self.establish_hr = max(self.establish_hr, hr10)
+                if self.samples == 300:
+                    self.baseline_w, self.power_hinted = take_measured("power baseline", "W", self.power_hinted, self.baseline_w, self.establish_w)
+                    self.plateau_hr, self.plateau_hinted = take_measured("hashrate plateau", "H/s", self.plateau_hinted, self.plateau_hr, self.establish_hr)
+                    self.last_check = now
+            elif now - self.last_check >= 300.0:
+                self.last_check = now
+                recent_w = max(self.power_window)
+                if abs(recent_w - self.baseline_w) > 0.05 * self.baseline_w:
+                    self.baseline_w, self.power_hinted = take_measured("power baseline", "W", self.power_hinted, self.baseline_w, recent_w)
+                recent_hr = max(self.hr_window)
+                if abs(recent_hr - self.plateau_hr) > 0.05 * self.plateau_hr:
+                    self.plateau_hr, self.plateau_hinted = take_measured("hashrate plateau", "H/s", self.plateau_hinted, self.plateau_hr, recent_hr)
+        if self.baseline_w <= 0 or mt <= 0:
+            return power_w
+        f = n / mt
+        if self.contention and not paused and self.plateau_hr > 0:
+            self.contend(now, n, mt, step, f, power_w, hr10, set_threads)
+        if f <= 0:
+            return 0.0
+        if f >= 1:
+            return power_w
+        return min(power_w, f * self.baseline_w)
+
+    def contend(self, now, n, mt, step, f, power_w, hr10, set_threads):
+        rel = hr10 / self.plateau_hr
+        if n > 0 and power_w >= 0.9 * f * self.baseline_w and rel < 0.9 * f:
+            self.clear_since = None
+            if self.fast_rampup:
+                log("fast rampup cleared by contention")
+            self.fast_rampup = False
+            if self.contention_since is None:
+                self.contention_since = now
+                log(f"contention detected: power {power_w:.1f} W vs expected {f * self.baseline_w:.1f} W, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
+            if n > step and now - self.contention_since >= 15.0 and now - self.last_step >= 60.0:
+                target = max(step, n - step)
+                log(f"auto drop, hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}: threads {n} -> {target}")
+                set_threads(n, target)
+                self.auto_capped = True
+                self.last_step = now
+            return
+        self.contention_since = None
+        if not self.auto_capped:
+            return
+        if self.clear_since is None:
+            self.clear_since = now
+            log(f"contention cleared at {n}/{mt} threads, raise in {60 if self.fast_rampup else 300} s")
+        if now - self.clear_since >= (60.0 if self.fast_rampup else 300.0):
+            log(f"auto raise, {now - self.clear_since:.0f} s without contention: threads {n} -> {n + 1}")
+            set_threads(n, n + 1)
+            self.clear_since = now
+            if n + 1 >= mt:
+                log(f"recovery complete at 100% ({mt} threads)")
+                if self.fast_rampup:
+                    log("fast rampup cleared at 100%")
+                self.fast_rampup = False
+                self.auto_capped = False
+            elif not self.fast_rampup:
+                self.fast_rampup = True
+                log("fast rampup set, next raise in 60 s")

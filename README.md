@@ -47,9 +47,18 @@ Needs the XMRig HTTP API (`XMRIG_HOST`/`XMRIG_PORT`, `XMRIG_TOKEN` when set). Th
 - **Intensity:** threads = `floor(percent * max_threads / 100)` on the active CPU profile via `GET/PUT /2/config`; `max_threads` is cached once from the profile or backends. 0% is zero threads, not pause. With XMRig `autosave`, it persists to `config.json`.
 - **Reject ratio:** `(shares_total - shares_good) / shares_total`.
 - **Profitability factor:** `revenue / cost` (1.0 ≈ break-even), revenue `hashrate * xmr_per_hs_day / 24 * xmr_eur`, cost `mining_W / 1000 * €/kWh`. Needs a spot price source (see Configuration) plus retained MQTT package power, `xmr_per_hs_day` and XMR/EUR; missing inputs are printed once a minute. Publish-only, no automation.
-- **Mining power:** raw `package_W` until a 100%-intensity baseline exists. The baseline is the max `package_W` over the first ~5 min at 100% (not paused), or `XMRIG_POWER_BASELINE_W` right away. A measurement replaces the hint only within ±5% of it, otherwise it is rejected and logged; set the hint close to the true value, since one more than 5% off is never replaced. Then `package_W` at 100%, `min(package_W, f * baseline)` when `f = threads/max_threads < 1`, 0 at 0%. Every ~5 min at 100%, if the rolling ~15 min max differs by more than ±5%, the baseline becomes that max. While paused, the last hashrate and mining watts are kept in RAM.
+- **Mining power:** raw `package_W` until a 100%-intensity baseline exists. The baseline is the max `package_W` over the first ~5 min at 100% (not paused), or `XMRIG_POWER_BASELINE_W` right away (see Plateau and hints). Then `package_W` at 100%, `min(package_W, f * baseline)` when `f = threads/max_threads < 1`, 0 at 0%. While paused, the last hashrate and mining watts are kept in RAM.
 
-Windows adds automatic contention handling ([windows/README.md](windows/README.md)).
+Linux and Windows share this logic (`MiningIntensity` in `mqtt_common.py`).
+
+Plateau and hints: the first ~5 min at 100% intensity set the power baseline (max package W) and the hashrate plateau (max 10 s hashrate). `XMRIG_POWER_BASELINE_W` and `XMRIG_HASHRATE_PLATEAU_HS` act as those values from the start until the 5 min are measured, so a game started right after boot does not skew them. While a hint is current, a measured value (5 min establishment or drift) replaces it only within ±5% of it; otherwise the measurement is rejected and logged. Set hints close to the true values: a hint more than 5% off is never replaced. Afterwards both follow the ±5% drift check every ~5 min against the rolling ~15 min max.
+
+Contention handling, with `XMRIG_CONTENTION_MODE=control` and once both values exist (`f = threads/max_threads`):
+
+- **Detect:** package power at least 90% of `f * baseline` while 10 s hashrate / plateau is below `0.9 * f`, for 15 s.
+- **Drop:** while contention lasts, threads drop once a minute by the logical threads per physical core (XMRig `/2/summary` `cpu.threads // cpu.cores`, usually 2 with SMT, 1 without), never below that step size.
+- **Recover** (only after an automatic drop): 5 min uncontested adds one thread and sets a fast-rampup flag; while it holds, each uncontested minute adds another until 100%. Contention clears the flag and the next recovery waits 5 min again.
+- A slider command cancels the automatic state. The slider always shows the threads XMRig really runs.
 
 ## loginctl active users
 
@@ -223,8 +232,8 @@ LHM_URL=
 | `XMRIG_HOST`, `XMRIG_PORT` | XMRig HTTP API (default `127.0.0.1:44444`) |
 | `XMRIG_TOKEN` | XMRig HTTP bearer token, optional |
 | `XMRIG_POWER_BASELINE_W` | 100%-intensity package power hint (W), used until measured; must be present, may be empty |
-| `XMRIG_HASHRATE_PLATEAU_HS` | Windows only: 100%-intensity 10 s hashrate hint (H/s), used until measured; must be present, may be empty |
-| `XMRIG_CONTENTION_MODE` | Windows only: `control` enables automatic thread reduction; must be present, empty is off |
+| `XMRIG_HASHRATE_PLATEAU_HS` | 100%-intensity 10 s hashrate hint (H/s), used until measured; must be present, may be empty |
+| `XMRIG_CONTENTION_MODE` | `control` enables automatic thread reduction; must be present, empty is off |
 | **Electricity price** (topic or fixed; HA only when neither is set) | |
 | `ELECTRICITY_EUR_PER_KWH_TOPIC` | MQTT topic with €/kWh |
 | `ELECTRICITY_EUR_PER_KWH` | fixed €/kWh |
@@ -247,4 +256,4 @@ As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3
 systemctl enable --now /root/mqtt-sensors/xmrig_status.service
 ```
 
-Upgrading a host: `cd /root/mqtt-sensors && git pull`, add any new `.env` keys from the example above (`XMRIG_POWER_BASELINE_W`, and on Windows `XMRIG_HASHRATE_PLATEAU_HS` and `XMRIG_CONTENTION_MODE`, are read directly and must be present), then restart the enabled units, e.g. `systemctl restart xmrig_status lightdm_active`.
+Upgrading a host: `cd /root/mqtt-sensors && git pull`, add any new `.env` keys from the example above (`XMRIG_POWER_BASELINE_W`, `XMRIG_HASHRATE_PLATEAU_HS` and `XMRIG_CONTENTION_MODE` are read directly and must be present, empty is fine), then restart the enabled units, e.g. `systemctl restart xmrig_status lightdm_active`.
