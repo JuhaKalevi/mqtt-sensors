@@ -224,7 +224,8 @@ class MiningIntensity:
         self.last_n = None
         self.settling = False
         self.settle_start = 0.0
-        self.settle_hr = deque(maxlen=11)
+        self.recent = deque(maxlen=30)
+        self.settle_threads = False
         self.contended_max = 0
         self.wait = 300.0
         self.raised = False
@@ -233,8 +234,6 @@ class MiningIntensity:
         self.low_since = None
         self.load_exit = False
         self.last_pool = None
-        self.stalled = False
-        self.avg_hr = deque(maxlen=30)
         self.gap_since = None
 
     def manual(self, percent):
@@ -283,46 +282,50 @@ class MiningIntensity:
         return min(power_w, f * self.baseline_w)
 
     def contend(self, now, n, mt, step, f, power_w, hr10, set_threads, load, pool):
-        if hr10 <= 0:
-            if not self.stalled:
-                self.stalled = True
-                log(f"hashrate 0 at {n}/{mt} threads, contention logic paused")
-            return
-        changed = None
-        if self.stalled:
-            self.stalled = False
-            changed = "hashrate back"
+        reason = None
         if n != self.last_n:
-            self.last_n = n
-            changed = changed or "threads"
-        if pool[0] != (self.last_pool or pool)[0] or pool[1] < (self.last_pool or pool)[1]:
-            changed = changed or f"pool/connection {pool[0]}"
+            reason = f"threads {self.last_n} -> {n}"
+        elif self.last_pool is not None and (pool[0] != self.last_pool[0] or pool[1] < self.last_pool[1]):
+            reason = f"pool/connection {pool[0]}"
+        elif hr10 <= 0:
+            reason = "hashrate 0"
+        self.last_n = n
         self.last_pool = pool
-        if changed:
-            if changed != "threads":
-                log(f"{changed}, settling again")
-            self.settling = True
-            self.settle_start = now
-            self.settle_hr.clear()
+        if reason is None and not self.settling and len(self.recent) == 30:
+            mean = sum(self.recent) / 30
+            if max(abs(x - mean) for x in self.recent) > 0.05 * mean:
+                reason = "hashrate swinging more than 5% over 30 s"
+        if reason:
+            if not self.settling:
+                self.settling = True
+                self.settle_start = now
+                self.settle_threads = False
+                log(f"settling at {n}/{mt} threads: {reason}")
+            self.settle_threads = self.settle_threads or reason.startswith("threads")
+            self.recent.clear()
+        if hr10 <= 0:
+            return
+        self.recent.append(hr10)
         if self.settling:
-            self.settle_hr.append(hr10)
-            flat = len(self.settle_hr) == 11 and 0 < max(self.settle_hr) <= self.settle_hr[0] * 1.02
-            if not flat and now - self.settle_start < 90.0:
+            if len(self.recent) < 15:
+                return
+            mean = sum(self.recent) / len(self.recent)
+            if max(abs(x - mean) for x in self.recent) > 0.05 * mean:
                 return
             self.settling = False
-            log(f"settled at {n} threads after {now - self.settle_start:.0f} s, hashrate {hr10:.0f} H/s")
-            self.contention_since = None
-            self.gap_since = None
-            self.avg_hr.clear()
-            self.last_step = now
-            if self.clear_since is not None:
-                self.clear_since = now
-            if self.low_since is not None:
-                self.low_since = now
-        self.avg_hr.append(hr10)
-        if len(self.avg_hr) < 10:
-            return
-        rel = sum(self.avg_hr) / len(self.avg_hr) / self.plateau_hr
+            held = now - self.settle_start
+            log(f"settled at {n} threads after {held:.0f} s, hashrate {mean:.0f} H/s")
+            for k in ("clear_since", "low_since", "gap_since", "contention_since", "calm_since"):
+                if getattr(self, k) is not None:
+                    setattr(self, k, getattr(self, k) + held)
+            self.last_step += held
+            if self.settle_threads:
+                self.contention_since = None
+                self.gap_since = None
+                self.last_step = now
+                if self.clear_since is not None:
+                    self.clear_since = now
+        rel = sum(self.recent) / len(self.recent) / self.plateau_hr
         line = (0.97 if self.contention_since is not None else 0.93) * f
         if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < line:
             if self.balanced:
