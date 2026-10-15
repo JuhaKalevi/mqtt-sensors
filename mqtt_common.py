@@ -217,7 +217,6 @@ class MiningIntensity:
         self.hr_window = deque(maxlen=900)
         self.last_check = 0.0
         self.auto_capped = False
-        self.fast_rampup = False
         self.contention_since = None
         self.clear_since = None
         self.last_step = 0.0
@@ -230,11 +229,9 @@ class MiningIntensity:
         self.recent = deque(maxlen=30)
         self.state = "tracking"
         self.state_since = time.monotonic()
-        self.contended_max = 0
         self.wait = 300.0
         self.raised = False
         self.calm_since = None
-        self.balanced = False
         self.low_since = None
         self.load_exit = False
         self.last_pool = None
@@ -243,8 +240,6 @@ class MiningIntensity:
     def manual(self, percent):
         self.go("tracking", time.monotonic(), f"manual slider {percent}%")
         self.auto_capped = False
-        self.balanced = False
-        self.fast_rampup = False
         self.reset_backoff("manual slider")
 
     def go(self, state, now, reason):
@@ -256,9 +251,8 @@ class MiningIntensity:
         self.state_since = now
 
     def reset_backoff(self, why):
-        if self.contended_max or self.wait > 300.0:
+        if self.wait > 300.0:
             log(f"recovery backoff reset ({why}), wait 300 s")
-        self.contended_max = 0
         self.wait = 300.0
         self.raised = False
 
@@ -287,8 +281,6 @@ class MiningIntensity:
         f = n / mt
         if self.contention and not paused and self.plateau_hr > 0:
             self.contend(now, n, mt, step, f, power_w, hr10, set_threads, load, pool)
-        if f <= 0:
-            return 0.0
         if f >= 1:
             return power_w
         return min(power_w, f * self.baseline_w)
@@ -353,8 +345,8 @@ class MiningIntensity:
             return
         rel = sum(self.recent) / len(self.recent) / self.plateau_hr
         line = (0.97 if self.contention_since is not None else 0.93) * f
-        if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < line:
-            if self.balanced:
+        if rel < line:
+            if self.state == "balanced":
                 if self.gap_since is None:
                     self.gap_since = now
                 if now - self.gap_since < 60.0:
@@ -362,18 +354,12 @@ class MiningIntensity:
             self.clear_since = None
             self.calm_since = None
             self.load_exit = False
-            self.balanced = False
-            self.fast_rampup = False
             if self.contention_since is None:
                 self.contention_since = now
                 why = f"hashrate {rel:.2f} of plateau below {line:.2f} at {n}/{mt} threads, power {power_w:.1f} W vs expected {f * self.baseline_w:.1f} W"
-                if self.raised and n <= self.contended_max:
+                if self.raised:
                     self.wait *= 2
-                    self.contended_max = n
-                    why += f"; raise failed, recovery wait {self.wait:.0f} s, remembered count {n}"
-                elif n > self.contended_max:
-                    self.contended_max = n
-                    why += f"; remembered count {n}"
+                    why += f"; raise failed, recovery wait {self.wait:.0f} s"
                 self.raised = False
                 self.go("contended", now, why)
             if n > 1 and now - self.contention_since >= 15.0 and now - self.last_step >= 60.0:
@@ -391,45 +377,40 @@ class MiningIntensity:
             if n >= mt:
                 if self.calm_since is None:
                     self.calm_since = now
-                if now - self.calm_since >= 900.0 and (self.contended_max or self.wait > 300.0):
+                if now - self.calm_since >= 900.0 and (self.raised or self.wait > 300.0):
                     self.reset_backoff("15 min calm at 100%")
             return
         why = f"hashrate {rel:.2f} of plateau above {line:.2f}" if cleared else None
         limit = 1.10 * f * self.baseline_w
-        if self.balanced and load is not None and int(load) <= n:
-            self.balanced = False
-            self.load_exit = True
-            self.low_since = None
-            why = f"5 min load {load:.2f} (floor {int(load)}) <= {n} threads"
-        if power_w > limit and not self.load_exit:
-            self.low_since = None
-            if not self.balanced:
-                self.balanced = True
-                self.clear_since = None
-                self.go("balanced", now, f"no hashrate gap at {n}/{mt} threads ({rel:.2f} vs {f:.2f}), power {power_w:.1f} W above {limit:.1f} W")
-            return
-        if self.balanced:
-            if self.low_since is None:
-                self.low_since = now
-            if now - self.low_since < 30.0:
+        if self.state == "balanced":
+            if load is not None and int(load) <= n:
+                self.load_exit = True
+                why = f"5 min load {load:.2f} (floor {int(load)}) <= {n} threads"
+            elif power_w > limit:
+                self.low_since = None
                 return
-            self.balanced = False
-            why = f"power {power_w:.1f} W at or below {limit:.1f} W for 30 s"
-        slow = not self.fast_rampup or (self.wait > 300.0 and n + 1 == self.contended_max)
-        delay = self.wait if slow else 60.0
+            else:
+                if self.low_since is None:
+                    self.low_since = now
+                if now - self.low_since < 30.0:
+                    return
+                why = f"power {power_w:.1f} W at or below {limit:.1f} W for 30 s"
+            self.low_since = None
+        elif power_w > limit and not self.load_exit:
+            self.clear_since = None
+            self.go("balanced", now, f"no hashrate gap at {n}/{mt} threads ({rel:.2f} vs {f:.2f}), power {power_w:.1f} W above {limit:.1f} W")
+            return
+        delay = 60.0 if self.raised else self.wait
         if self.clear_since is None:
             self.clear_since = now
-            self.go("recovering", now, f"{why or 'no contention'} at {n}/{mt} threads; raise in {delay:.0f} s, remembered count {self.contended_max}")
+            self.go("recovering", now, f"{why or 'no contention'} at {n}/{mt} threads; raise in {delay:.0f} s")
         if now - self.clear_since >= delay:
             set_threads(n, n + 1)
             self.raised = True
             self.clear_since = now
             if n + 1 >= mt:
                 log(f"auto raise after {delay:.0f} s: threads {n} -> {n + 1}")
-                self.fast_rampup = False
                 self.auto_capped = False
                 self.go("tracking", now, f"recovery complete at 100% ({mt} threads)")
             else:
-                self.fast_rampup = True
-                nxt = self.wait if self.wait > 300.0 and n + 2 == self.contended_max else 60.0
-                log(f"auto raise after {delay:.0f} s: threads {n} -> {n + 1}, next raise in {nxt:.0f} s")
+                log(f"auto raise after {delay:.0f} s: threads {n} -> {n + 1}, next raise in 60 s")
