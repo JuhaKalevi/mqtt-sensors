@@ -294,12 +294,12 @@ def missing_inputs(eff_hr, eff_power):
     return missing
 
 
-def attributed_power(paused, hr10):
+def attributed_power(paused, hr10, conn):
     if power_w is None:
         return None
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
-    return MINING.sample(time.monotonic(), paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads, os.getloadavg()[1])
+    return MINING.sample(time.monotonic(), paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads, os.getloadavg()[1], conn)
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
@@ -317,11 +317,13 @@ def publish_stats(data):
     rej = 0.0 if shares == 0 else (shares - good) * 100.0 / shares
     paused = bool(data["paused"])
     hr10 = float(total[0] or 0)
+    conn = data["connection"]
+    pool = (f"{conn['pool']} {conn['ip']}", conn["uptime"])
     client.publish(STATE_HR, format(hr, ".15g"), retain=True)
     client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
     client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
     if MINING.contention and not PROFIT_WANTED:
-        attributed_power(paused, hr10)
+        attributed_power(paused, hr10, pool)
     client.publish(STATE_INT, str(current_intensity_percent()), retain=True)
     if not PROFIT_WANTED:
         return
@@ -334,7 +336,7 @@ def publish_stats(data):
         last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
-    mining_w = attributed_power(paused, hr10)
+    mining_w = attributed_power(paused, hr10, pool)
     if not paused:
         if mining_w is not None and mining_w > 0:
             last_power = mining_w

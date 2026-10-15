@@ -232,6 +232,10 @@ class MiningIntensity:
         self.balanced = False
         self.low_since = None
         self.load_exit = False
+        self.last_pool = None
+        self.stalled = False
+        self.avg_hr = deque(maxlen=30)
+        self.gap_since = None
 
     def manual(self, percent):
         if self.auto_capped:
@@ -247,7 +251,7 @@ class MiningIntensity:
         self.wait = 300.0
         self.raised = False
 
-    def sample(self, now, paused, n, mt, step, power_w, hr10, set_threads, load):
+    def sample(self, now, paused, n, mt, step, power_w, hr10, set_threads, load, pool):
         if not paused and mt > 0 and n == mt and power_w > 0:
             self.power_window.append(power_w)
             self.hr_window.append(hr10)
@@ -271,16 +275,32 @@ class MiningIntensity:
             return power_w
         f = n / mt
         if self.contention and not paused and self.plateau_hr > 0:
-            self.contend(now, n, mt, step, f, power_w, hr10, set_threads, load)
+            self.contend(now, n, mt, step, f, power_w, hr10, set_threads, load, pool)
         if f <= 0:
             return 0.0
         if f >= 1:
             return power_w
         return min(power_w, f * self.baseline_w)
 
-    def contend(self, now, n, mt, step, f, power_w, hr10, set_threads, load):
+    def contend(self, now, n, mt, step, f, power_w, hr10, set_threads, load, pool):
+        if hr10 <= 0:
+            if not self.stalled:
+                self.stalled = True
+                log(f"hashrate 0 at {n}/{mt} threads, contention logic paused")
+            return
+        changed = None
+        if self.stalled:
+            self.stalled = False
+            changed = "hashrate back"
         if n != self.last_n:
             self.last_n = n
+            changed = changed or "threads"
+        if pool[0] != (self.last_pool or pool)[0] or pool[1] < (self.last_pool or pool)[1]:
+            changed = changed or f"pool/connection {pool[0]}"
+        self.last_pool = pool
+        if changed:
+            if changed != "threads":
+                log(f"{changed}, settling again")
             self.settling = True
             self.settle_start = now
             self.settle_hr.clear()
@@ -292,17 +312,30 @@ class MiningIntensity:
             self.settling = False
             log(f"settled at {n} threads after {now - self.settle_start:.0f} s, hashrate {hr10:.0f} H/s")
             self.contention_since = None
+            self.gap_since = None
+            self.avg_hr.clear()
             self.last_step = now
             if self.clear_since is not None:
                 self.clear_since = now
-        rel = hr10 / self.plateau_hr
-        if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < 0.95 * f:
+            if self.low_since is not None:
+                self.low_since = now
+        self.avg_hr.append(hr10)
+        if len(self.avg_hr) < 10:
+            return
+        rel = sum(self.avg_hr) / len(self.avg_hr) / self.plateau_hr
+        line = (0.97 if self.contention_since is not None else 0.93) * f
+        if n > 0 and (self.auto_capped or power_w >= 0.9 * f * self.baseline_w) and rel < line:
+            if self.balanced:
+                if self.gap_since is None:
+                    self.gap_since = now
+                if now - self.gap_since < 60.0:
+                    return
             self.clear_since = None
             self.calm_since = None
             self.load_exit = False
             if self.balanced:
                 self.balanced = False
-                log(f"leaving balanced at {n}/{mt} threads: hashrate {rel:.2f} of plateau vs thread fraction {f:.2f}")
+                log(f"leaving balanced at {n}/{mt} threads: hashrate {rel:.2f} of plateau below {line:.2f} for 60 s")
             if self.fast_rampup:
                 log("fast rampup cleared by contention")
             self.fast_rampup = False
@@ -325,6 +358,7 @@ class MiningIntensity:
                 self.last_step = now
             return
         self.contention_since = None
+        self.gap_since = None
         if n >= mt and not self.auto_capped:
             if self.calm_since is None:
                 self.calm_since = now
