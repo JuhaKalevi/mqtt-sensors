@@ -233,7 +233,7 @@ class MiningIntensity:
         self.raised = False
         self.calm_since = None
         self.low_since = None
-        self.load_exit = False
+        self.override = False
         self.last_pool = None
         self.gap_since = None
 
@@ -353,7 +353,7 @@ class MiningIntensity:
                     return
             self.clear_since = None
             self.calm_since = None
-            self.load_exit = False
+            self.override = False
             if self.contention_since is None:
                 self.contention_since = now
                 why = f"hashrate {rel:.2f} of plateau below {line:.2f} at {n}/{mt} threads, power {power_w:.1f} W vs expected {f * self.baseline_w:.1f} W"
@@ -381,12 +381,16 @@ class MiningIntensity:
                     self.reset_backoff("15 min calm at 100%")
             return
         why = f"hashrate {rel:.2f} of plateau above {line:.2f}" if cleared else None
-        limit = 1.10 * f * self.baseline_w
+        if load is None:
+            limit = 1.10 * f * self.baseline_w
+            busy = power_w > limit
+            low, seen = not busy, f"power {power_w:.1f} W vs {limit:.1f} W"
+        else:
+            busy, low, seen = int(load + 0.5) > n, power_w < 0.85 * f * self.baseline_w, f"5 min load {load:.2f}"
         if self.state == "balanced":
-            if load is not None and int(load) <= n:
-                self.load_exit = True
-                why = f"5 min load {load:.2f} (floor {int(load)}) <= {n} threads"
-            elif power_w > limit:
+            if not busy and load is not None:
+                why = f"{seen} rounds to <= {n} threads"
+            elif busy and not low:
                 self.low_since = None
                 return
             else:
@@ -394,11 +398,12 @@ class MiningIntensity:
                     self.low_since = now
                 if now - self.low_since < 30.0:
                     return
-                why = f"power {power_w:.1f} W at or below {limit:.1f} W for 30 s"
+                self.override = busy
+                why = f"power {power_w:.1f} W below {0.85 * f * self.baseline_w:.1f} W for 30 s despite {seen} (I/O stall override)" if busy else f"{seen} for 30 s"
             self.low_since = None
-        elif power_w > limit and not self.load_exit:
+        elif busy and not self.override:
             self.clear_since = None
-            self.go("balanced", now, f"no hashrate gap at {n}/{mt} threads ({rel:.2f} vs {f:.2f}), power {power_w:.1f} W above {limit:.1f} W")
+            self.go("balanced", now, f"no hashrate gap at {n}/{mt} threads ({rel:.2f} vs {f:.2f}), {seen}")
             return
         delay = 60.0 if self.raised else self.wait
         if self.clear_since is None:
