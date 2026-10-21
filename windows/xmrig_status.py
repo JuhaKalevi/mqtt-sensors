@@ -9,8 +9,9 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
 from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_switch_discovery, make_number_discovery, create_client, MiningIntensity
+    get_hostname, get_mqtt_settings, make_switch_discovery, make_number_discovery, create_client
 )
+from xmrig_common import MiningIntensity, Contention
 
 HOSTNAME = get_hostname()
 DEVICE = {"identifiers": [f"windows_host_{HOSTNAME}"], "name": HOSTNAME}
@@ -106,11 +107,8 @@ baseline_profile = None
 profile_key = None
 core_step = None
 pending_intensity = None
-MINING = MiningIntensity(
-    os.environ["XMRIG_POWER_BASELINE_W"],
-    os.environ["XMRIG_HASHRATE_PLATEAU_HS"],
-    os.environ["XMRIG_CONTENTION_MODE"] == "control",
-)
+MINING = MiningIntensity(os.environ["XMRIG_POWER_BASELINE_W"], os.environ["XMRIG_HASHRATE_PLATEAU_HS"])
+CONTENTION = Contention(MINING) if os.environ["XMRIG_CONTENTION_MODE"] == "control" else None
 
 def auth_headers():
     h = {"Content-Type": "application/json"}
@@ -195,7 +193,8 @@ def intensity_threads(n):
 
 def apply_intensity(percent):
     ensure_baseline()
-    MINING.manual(percent)
+    if CONTENTION:
+        CONTENTION.manual(percent)
     percent = max(0, min(100, int(percent)))
     set_threads(max(1, percent * max_threads // 100))
 
@@ -203,16 +202,6 @@ def set_threads(n):
     cfg = get_config()
     cfg["cpu"][profile_key] = intensity_threads(n)
     put_config(cfg)
-
-def auto_threads(n, target):
-    try:
-        set_threads(target)
-    except BaseException as err:
-        print(f"xmrig_status: XMRig thread change {n} -> {target} failed: {err!r}", flush=True)
-        raise
-    info = client.publish(STATE_INT, str(target * 100 // max_threads), retain=True)
-    if info.rc != 0:
-        print(f"xmrig_status: intensity slider publish failed rc={info.rc}", flush=True)
 
 def current_intensity_percent():
     cpu = active_cpu()
@@ -260,12 +249,32 @@ def inputs_ready():
     )
 
 
-def attributed_power(paused, hr10, conn):
+def auto_threads(n, target):
+    try:
+        set_threads(target)
+    except BaseException as err:
+        print(f"xmrig_status: XMRig thread change {n} -> {target} failed: {err!r}", flush=True)
+        raise
+    info = client.publish(STATE_INT, str(target * 100 // max_threads), retain=True)
+    if info.rc != 0:
+        print(f"xmrig_status: intensity slider publish failed rc={info.rc}", flush=True)
+
+def contend(now, paused, n, hr10, data):
+    conn = data["connection"]
+    pool = (f"{conn['pool']} {conn['ip']}", conn["uptime"])
+    CONTENTION.tick(now, paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads, None, pool)
+
+def attributed_power(paused, data):
     if power_w is None:
         return None
     ensure_baseline()
     n = len(active_cpu().get("threads") or [])
-    return MINING.sample(time.monotonic(), paused, n, max_threads or 0, core_step, power_w, hr10, auto_threads, None, conn)
+    now = time.monotonic()
+    hr10 = float(data["hashrate"]["total"][0] or 0)
+    mining_w = MINING.sample(now, paused, n, max_threads or 0, power_w, hr10)
+    if CONTENTION:
+        contend(now, paused, n, hr10, data)
+    return mining_w
 
 def profitability(eff_hr, eff_power):
     if not inputs_ready() or eff_hr <= 0 or eff_power <= 0:
@@ -282,14 +291,10 @@ def publish_stats(data):
     shares = int(data["results"]["shares_total"])
     rej = 0.0 if shares == 0 else (shares - good) * 100.0 / shares
     paused = bool(data["paused"])
-    hr10 = float(total[0] or 0)
-    conn = data["connection"]
-    pool = (f"{conn['pool']} {conn['ip']}", conn["uptime"])
     client.publish(STATE_HR, format(hr, ".15g"), retain=True)
     client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
     client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
-    if MINING.contention and not PROFIT_WANTED:
-        attributed_power(paused, hr10, pool)
+    mining_w = attributed_power(paused, data)
     client.publish(STATE_INT, str(current_intensity_percent()), retain=True)
     if not PROFIT_WANTED:
         return
@@ -302,7 +307,6 @@ def publish_stats(data):
         last_ha_spot = now
     if not paused and hr > 0:
         last_hr = hr
-    mining_w = attributed_power(paused, hr10, pool)
     if not paused:
         if mining_w is not None and mining_w > 0:
             last_power = mining_w
@@ -326,7 +330,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_INT, json.dumps(DISCOVERY_INT), retain=True)
         client.subscribe(CMD_SW)
         client.subscribe(CMD_INT)
-        if PROFIT_WANTED or MINING.contention:
+        if PROFIT_WANTED or CONTENTION:
             client.subscribe(TOPIC_POWER)
         if PROFIT_WANTED:
             client.subscribe(TOPIC_RATE)

@@ -1,6 +1,6 @@
 # Windows
 
-The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is `mqtt_common.py` only. Object ids, topics and availability match Linux (`cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, `xmrig_*_<hostname>`), so a Windows miner feeds the same MQTT names. The HA device id is `windows_host_<hostname>` (display name is the hostname).
+The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is `mqtt_common.py` (and `xmrig_common.py` for XMRig). Object ids, topics and availability match Linux (`cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, `xmrig_*_<hostname>`), so a Windows miner feeds the same MQTT names. The HA device id is `windows_host_<hostname>` (display name is the hostname).
 
 Relaxed exception: a program already on the machine may be a source. No vendored driver, no pip. Fail-fast still applies.
 
@@ -26,4 +26,4 @@ Upgrading: `git pull`, add any new `.env` keys from the root example, then quit 
 
 `xmrig_status.py` matches the Linux collector (switch, intensity, reject ratio, profitability, mining power attribution; see the root README) on one held HTTP connection. The switch and intensity need `http.restricted=false`.
 
-Baseline, plateau, hints and contention handling are shared with Linux (`MiningIntensity` in `mqtt_common.py`); see the [root README](../README.md#xmrig).
+Baseline, plateau, hints and contention handling are shared with Linux (`MiningIntensity` and `Contention` in `xmrig_common.py`); see the [root README](../README.md#xmrig).
