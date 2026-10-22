@@ -54,7 +54,7 @@ for name, d in chips:
         unique = f"hwmon_{slug(chip)}_{inp}_{HOSTNAME}"
         state = f"{PREFIX}/sensor/{unique}/state"
         sensors.append({
-            "fd": fd, "scale": scale, "prec": prec, "state": state,
+            "fd": fd, "scale": scale, "state": state,
             "config": f"{PREFIX}/sensor/{unique}/config",
             "disc": make_sensor_discovery(f"{chip} {label} {kind}", state, AVAIL_T, unique, DEVICE,
                                           unit, dclass, "measurement") | {"suggested_display_precision": prec},
@@ -84,5 +84,5 @@ signal.signal(signal.SIGTERM, cleanup)
 
 while True:
     for s in sensors:
-        client.publish(s["state"], f"{int(os.pread(s['fd'], 32, 0)) / s['scale']:.{s['prec']}f}", retain=True)
+        client.publish(s["state"], str(int(os.pread(s["fd"], 32, 0)) / s["scale"]), retain=True)
     time.sleep(5.0)

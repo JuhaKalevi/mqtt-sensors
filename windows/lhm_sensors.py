@@ -69,7 +69,7 @@ for sid, hardware, text, kind, _ in read_all():
     unique = f"lhm_{slug(sid)}_{HOSTNAME}"
     state = f"{PREFIX}/sensor/{unique}/state"
     sensors[sid] = {
-        "prec": prec, "state": state,
+        "state": state,
         "config": f"{PREFIX}/sensor/{unique}/config",
         "disc": make_sensor_discovery(f"{hardware} {text} {kind}", state, AVAIL_T, unique, DEVICE,
                                       unit, dclass, "measurement") | {"suggested_display_precision": prec},
@@ -99,7 +99,7 @@ try:
         for sid, _, _, _, raw in read_all():
             s = sensors.get(sid)
             if s:
-                client.publish(s["state"], f"{parse_value(raw):.{s['prec']}f}", retain=True)
+                client.publish(s["state"], str(parse_value(raw)), retain=True)
         time.sleep(5.0)
 except KeyboardInterrupt:
     pass
