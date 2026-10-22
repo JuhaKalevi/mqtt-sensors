@@ -16,7 +16,7 @@ EXCLUDE = {x.strip() for x in os.environ["HWMON_SENSORS_EXCLUDE"].split(",") if 
 SKIP = {"drivetemp", "nvme", "nouveau"}
 KINDS = {
     "temp": ("Temperature", "°C", "temperature", 1000.0, 1),
-    "fan": ("Fan Speed", "RPM", None, 1.0, 0),
+    "fan": ("Fan Speed", "RPM", None, 1, 0),
     "in": ("Voltage", "V", "voltage", 1000.0, 3),
 }
 
@@ -84,5 +84,6 @@ signal.signal(signal.SIGTERM, cleanup)
 
 while True:
     for s in sensors:
-        client.publish(s["state"], str(int(os.pread(s["fd"], 32, 0)) / s["scale"]), retain=True)
+        v = int(os.pread(s["fd"], 32, 0))
+        client.publish(s["state"], str(v if s["scale"] == 1 else v / s["scale"]), retain=True)
     time.sleep(5.0)
