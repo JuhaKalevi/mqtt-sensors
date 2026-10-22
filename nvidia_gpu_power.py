@@ -3,7 +3,7 @@
 import time, re, subprocess, json, signal, os, select
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device,
-    make_power_discovery, make_energy_discovery, create_client
+    make_power_discovery, make_energy_discovery, make_sensor_discovery, create_client
 )
 
 HOSTNAME = get_hostname()
@@ -12,6 +12,19 @@ CLIENT_ID = f"gpu-power-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 AVAIL_T = f"{PREFIX}/sensor/gpu_power_{HOSTNAME}/availability"
+STATS = [
+    ("temperature.gpu", "temperature", "Temperature", "°C", "temperature"),
+    ("temperature.memory", "memory_temperature", "Memory Temperature", "°C", "temperature"),
+    ("fan.speed", "fan_speed", "Fan Speed", "%", None),
+    ("clocks.gr", "core_clock", "Core Clock", "MHz", "frequency"),
+    ("clocks.mem", "memory_clock", "Memory Clock", "MHz", "frequency"),
+    ("utilization.gpu", "utilization", "Utilization", "%", None),
+    ("utilization.memory", "memory_utilization", "Memory Utilization", "%", None),
+    ("power.limit", "power_limit", "Power Limit", "W", "power"),
+    ("pstate", "pstate", "Performance State", None, None),
+    ("clocks_throttle_reasons.active", "throttle_reasons", "Throttle Reasons", None, None),
+] if os.environ["NVIDIA_GPU_STATS"] else []
+FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS])
 
 def clean_gpu_name(name):
     name = re.sub(r"^NVIDIA\s+", "", name, flags=re.I)
@@ -22,7 +35,7 @@ def start_smi_stream():
     return subprocess.Popen(
         [
             "nvidia-smi",
-            "--query-gpu=index,name,power.draw",
+            f"--query-gpu={FIELDS}",
             "--format=csv,noheader,nounits",
             "--loop=1",
         ],
@@ -55,7 +68,7 @@ def read_sample(proc, expected_count=None):
                 idx = int(parts[0])
             except ValueError:
                 continue
-        lines.append({"idx": idx, "name": name, "power": power})
+        lines.append({"idx": idx, "name": name, "power": power, "extra": parts[3:]})
         if expected_count is not None and len(lines) >= expected_count:
             break
         if expected_count is None and len(lines) > 0:
@@ -90,6 +103,12 @@ for g in first:
         "disc_p": disc_p,
         "disc_e": disc_e,
         "energy_wh": 0.0,
+        "stats": [
+            (i, f"{PREFIX}/sensor/gpu{g['idx']}_{s[1]}_{HOSTNAME}/state", f"{PREFIX}/sensor/gpu{g['idx']}_{s[1]}_{HOSTNAME}/config",
+             make_sensor_discovery(f"{base} {s[2]}", f"{PREFIX}/sensor/gpu{g['idx']}_{s[1]}_{HOSTNAME}/state", AVAIL_T,
+                                   f"gpu{g['idx']}_{s[1]}_{HOSTNAME}", DEVICE, s[3], s[4], "measurement" if s[3] else None))
+            for i, s in enumerate(STATS) if not g["extra"][i].startswith("[")
+        ],
     })
 
 gpu_by_idx = {g["idx"]: g for g in gpus}
@@ -100,6 +119,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         for g in gpus:
             client.publish(g["config_p"], json.dumps(g["disc_p"]), retain=True)
             client.publish(g["config_e"], json.dumps(g["disc_e"]), retain=True)
+            for _, _, config, disc in g["stats"]:
+                client.publish(config, json.dumps(disc), retain=True)
         client.publish(AVAIL_T, "online", retain=True)
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
@@ -137,6 +158,9 @@ try:
         g["energy_wh"] += power * (dt / 3600.0)
         client.publish(g["state_p"], f"{power:.1f}", retain=True)
         client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}", retain=True)
+        for i, state, _, _ in g["stats"]:
+            if not sample["extra"][i].startswith("["):
+                client.publish(state, sample["extra"][i], retain=True)
 
     while True:
         sample = read_sample(proc, expected_count=expected)
@@ -153,6 +177,9 @@ try:
             g["energy_wh"] += power * (dt / 3600.0)
             client.publish(g["state_p"], f"{power:.1f}", retain=True)
             client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}", retain=True)
+        for i, state, _, _ in g["stats"]:
+            if not s["extra"][i].startswith("["):
+                client.publish(state, s["extra"][i], retain=True)
 except Exception:
     pass
 finally:

@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
 from mqtt_common import (
     get_hostname, get_mqtt_settings,
-    make_power_discovery, make_energy_discovery, create_client
+    make_power_discovery, make_energy_discovery, make_sensor_discovery, create_client
 )
 
 HOSTNAME = get_hostname()
@@ -18,7 +18,20 @@ CLIENT_ID = f"gpu-power-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 AVAIL_T = f"{PREFIX}/sensor/gpu_power_{HOSTNAME}/availability"
-QUERY = ["nvidia-smi", "--query-gpu=index,name,power.draw", "--format=csv,noheader,nounits"]
+STATS = [
+    ("temperature.gpu", "temperature", "Temperature", "°C", "temperature"),
+    ("temperature.memory", "memory_temperature", "Memory Temperature", "°C", "temperature"),
+    ("fan.speed", "fan_speed", "Fan Speed", "%", None),
+    ("clocks.gr", "core_clock", "Core Clock", "MHz", "frequency"),
+    ("clocks.mem", "memory_clock", "Memory Clock", "MHz", "frequency"),
+    ("utilization.gpu", "utilization", "Utilization", "%", None),
+    ("utilization.memory", "memory_utilization", "Memory Utilization", "%", None),
+    ("power.limit", "power_limit", "Power Limit", "W", "power"),
+    ("pstate", "pstate", "Performance State", None, None),
+    ("clocks_throttle_reasons.active", "throttle_reasons", "Throttle Reasons", None, None),
+] if os.environ["NVIDIA_GPU_STATS"] else []
+FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS])
+QUERY = ["nvidia-smi", f"--query-gpu={FIELDS}", "--format=csv,noheader,nounits"]
 
 def clean_gpu_name(name):
     name = re.sub(r"^NVIDIA\s+", "", name, flags=re.I)
@@ -37,7 +50,7 @@ def parse_line(line):
         power = float(parts[2])
     except ValueError:
         power = 0.0
-    return {"idx": idx, "name": clean_gpu_name(parts[1]), "power": power}
+    return {"idx": idx, "name": clean_gpu_name(parts[1]), "power": power, "extra": parts[3:]}
 
 def hidden_console():
     info = subprocess.STARTUPINFO()
@@ -85,6 +98,12 @@ for g in rows:
         "disc_p": make_power_discovery(f"{base} Power", state_p, AVAIL_T, unique, DEVICE),
         "disc_e": make_energy_discovery(f"{base} Energy", state_e, AVAIL_T, unique_e, DEVICE),
         "energy_wh": 0.0,
+        "stats": [
+            (i, f"{PREFIX}/sensor/gpu{g['idx']}_{s[1]}_{HOSTNAME}/state", f"{PREFIX}/sensor/gpu{g['idx']}_{s[1]}_{HOSTNAME}/config",
+             make_sensor_discovery(f"{base} {s[2]}", f"{PREFIX}/sensor/gpu{g['idx']}_{s[1]}_{HOSTNAME}/state", AVAIL_T,
+                                   f"gpu{g['idx']}_{s[1]}_{HOSTNAME}", DEVICE, s[3], s[4], "measurement" if s[3] else None))
+            for i, s in enumerate(STATS) if not g["extra"][i].startswith("[")
+        ],
     })
 gpu_by_idx = {g["idx"]: g for g in gpus}
 expected = len(gpus)
@@ -94,6 +113,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         for g in gpus:
             client.publish(g["config_p"], json.dumps(g["disc_p"]), retain=True)
             client.publish(g["config_e"], json.dumps(g["disc_e"]), retain=True)
+            for _, _, config, disc in g["stats"]:
+                client.publish(config, json.dumps(disc), retain=True)
         client.publish(AVAIL_T, "online", retain=True)
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
@@ -125,6 +146,9 @@ def publish(sample):
         g["energy_wh"] += s["power"] * (dt / 3600.0)
         client.publish(g["state_p"], f"{s['power']:.1f}", retain=True)
         client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}", retain=True)
+        for i, state, _, _ in g["stats"]:
+            if not s["extra"][i].startswith("["):
+                client.publish(state, s["extra"][i], retain=True)
 
 def stop():
     client.publish(AVAIL_T, "offline", retain=True)
