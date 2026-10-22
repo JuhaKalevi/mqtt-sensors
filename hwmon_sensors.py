@@ -15,9 +15,9 @@ AVAIL_T = f"{PREFIX}/sensor/hwmon_sensors_{HOSTNAME}/availability"
 EXCLUDE = {x.strip() for x in os.environ["HWMON_SENSORS_EXCLUDE"].split(",") if x.strip()}
 SKIP = {"drivetemp", "nvme", "nouveau"}
 KINDS = {
-    "temp": ("Temperature", "°C", "temperature", 1000.0, "{:.1f}"),
-    "fan": ("Fan Speed", "RPM", None, 1.0, "{:.0f}"),
-    "in": ("Voltage", "V", "voltage", 1000.0, "{:.3f}"),
+    "temp": ("Temperature", "°C", "temperature", 1000.0, 1),
+    "fan": ("Fan Speed", "RPM", None, 1.0, 0),
+    "in": ("Voltage", "V", "voltage", 1000.0, 3),
 }
 
 def slug(text):
@@ -50,14 +50,14 @@ for name, d in chips:
         except OSError:
             os.close(fd)
             continue
-        kind, unit, dclass, scale, fmt = KINDS[m.group(1)]
+        kind, unit, dclass, scale, prec = KINDS[m.group(1)]
         unique = f"hwmon_{slug(chip)}_{inp}_{HOSTNAME}"
         state = f"{PREFIX}/sensor/{unique}/state"
         sensors.append({
-            "fd": fd, "scale": scale, "fmt": fmt, "state": state,
+            "fd": fd, "scale": scale, "prec": prec, "state": state,
             "config": f"{PREFIX}/sensor/{unique}/config",
             "disc": make_sensor_discovery(f"{chip} {label} {kind}", state, AVAIL_T, unique, DEVICE,
-                                          unit, dclass, "measurement"),
+                                          unit, dclass, "measurement") | {"suggested_display_precision": prec},
         })
 if not sensors:
     raise SystemExit("no hwmon sensors")
@@ -84,5 +84,5 @@ signal.signal(signal.SIGTERM, cleanup)
 
 while True:
     for s in sensors:
-        client.publish(s["state"], s["fmt"].format(int(os.pread(s["fd"], 32, 0)) / s["scale"]), retain=True)
+        client.publish(s["state"], f"{int(os.pread(s['fd'], 32, 0)) / s['scale']:.{s['prec']}f}", retain=True)
     time.sleep(5.0)

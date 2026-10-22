@@ -20,12 +20,12 @@ if LHM.scheme != "http" or not LHM.hostname or LHM.port is None:
     raise SystemExit("LHM_URL must be http://host:port")
 AVAIL_T = f"{PREFIX}/sensor/lhm_sensors_{HOSTNAME}/availability"
 KINDS = {
-    "Temperature": ("°C", "temperature", "{:.1f}"),
-    "Fan": ("RPM", None, "{:.0f}"),
-    "Voltage": ("V", "voltage", "{:.3f}"),
-    "Clock": ("MHz", "frequency", "{:.0f}"),
-    "Load": ("%", None, "{:.1f}"),
-    "Control": ("%", None, "{:.0f}"),
+    "Temperature": ("°C", "temperature", 1),
+    "Fan": ("RPM", None, 0),
+    "Voltage": ("V", "voltage", 3),
+    "Clock": ("MHz", "frequency", 0),
+    "Load": ("%", None, 1),
+    "Control": ("%", None, 0),
 }
 
 def slug(text):
@@ -65,14 +65,14 @@ conn = http.client.HTTPConnection(LHM.hostname, LHM.port, timeout=5)
 conn.connect()
 sensors = {}
 for sid, hardware, text, kind, _ in read_all():
-    unit, dclass, fmt = KINDS[kind]
+    unit, dclass, prec = KINDS[kind]
     unique = f"lhm_{slug(sid)}_{HOSTNAME}"
     state = f"{PREFIX}/sensor/{unique}/state"
     sensors[sid] = {
-        "fmt": fmt, "state": state,
+        "prec": prec, "state": state,
         "config": f"{PREFIX}/sensor/{unique}/config",
         "disc": make_sensor_discovery(f"{hardware} {text} {kind}", state, AVAIL_T, unique, DEVICE,
-                                      unit, dclass, "measurement"),
+                                      unit, dclass, "measurement") | {"suggested_display_precision": prec},
     }
 if not sensors:
     raise SystemExit("LibreHardwareMonitor reported no sensors")
@@ -99,7 +99,7 @@ try:
         for sid, _, _, _, raw in read_all():
             s = sensors.get(sid)
             if s:
-                client.publish(s["state"], s["fmt"].format(parse_value(raw)), retain=True)
+                client.publish(s["state"], f"{parse_value(raw):.{s['prec']}f}", retain=True)
         time.sleep(5.0)
 except KeyboardInterrupt:
     pass
