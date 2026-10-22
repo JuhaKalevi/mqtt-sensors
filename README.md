@@ -69,6 +69,10 @@ session [success=1 default=ignore] pam_succeed_if.so quiet user ingroup sshfs
 
 If you sshfs as a user who is already on a seat, they were already in the list; the mount does not add a new name.
 
+## Input APM
+
+`input_apm.py` reads keyboard and mouse events straight from `/dev/input/event*` (root, standard library, no X). Every 5 s it publishes mouse, keyboard and total APM: button and key presses in the last 60 s. Key repeats do not count. Which key was pressed is never stored or published. Devices plugged in later are picked up within 5 s.
+
 ## Unit switches (LightDM, Ollama)
 
 `lightdm_active.py` publishes a HA `switch` (`switch/lightdm_active_<host>/{config,state,set}`). State is the `lightdm.service` cgroup dir existing, checked each second. On connect it clears the retained discovery and state of the old `binary_sensor/lightdm_active_<host>` so HA drops that entity.
