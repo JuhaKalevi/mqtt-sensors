@@ -27,6 +27,7 @@ Collectors on a host share one HA device `linux_host_<hostname>`, named after th
 | `ollama_active.py` | switch: Ollama running | `ollama.service` cgroup dir |
 | `hwmon_drive_temperature.py` | per-drive temperature (°C) | `/sys/class/hwmon` + SAT `SG_IO`, every 60 s |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply`, each second |
+| `kmsg_reset_reason.py` | previous system reset reason (text, hex `code` attribute), once per boot | `/dev/kmsg` |
 | `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
 | `support/xmr_eur_price.py` | XMR/EUR (EUR) | Kraken public ticker, 60 s |
 | `support/xmr_network.py` | Monero difficulty, network hashrate (H/s), block reward (XMR), XMR/H/s/day | xmrchain.net, 60 s |
@@ -94,6 +95,16 @@ If you sshfs as a user who is already on a seat, they were already in the list; 
 ## Input APM
 
 `input_apm.py` reads keyboard and mouse events straight from `/dev/input/event*` (root, standard library, no X). Every 5 s it publishes mouse, keyboard and total APM: button and key presses in the last 60 s. Key repeats do not count. Which key was pressed is never stored or published. Devices plugged in later are picked up within 5 s.
+
+## Previous system reset reason
+
+`kmsg_reset_reason.py` reads the current boot's kernel ring buffer from `/dev/kmsg` once, finds `x86/amd: Previous system reset reason [0x…]: …` and publishes the reason text as state with the raw hex as the `code` attribute, all retained, then exits. No availability topic, so the value stays after the process ends. AMD hosts only: without that line (other CPU, older kernel) it crashes; do not enable it there.
+
+`kmsg_reset_reason.service` is `Type=oneshot` after `network-online.target`; `Restart=on-failure` covers a broker that is not up yet. Enable it so it runs on every boot (`--now` also publishes the current boot):
+
+```
+systemctl enable --now /root/mqtt-sensors/kmsg_reset_reason.service
+```
 
 ## Unit switches (LightDM, Ollama)
 
