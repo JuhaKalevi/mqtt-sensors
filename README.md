@@ -30,6 +30,7 @@ Collectors on a host share one HA device `linux_host_<hostname>`, named after th
 | `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
 | `support/xmr_eur_price.py` | XMR/EUR (EUR) | Kraken public ticker, 60 s |
 | `support/xmr_network.py` | Monero difficulty, network hashrate (H/s), block reward (XMR), XMR/H/s/day | xmrchain.net, 60 s |
+| `grok_usage.py` | Grok subscription credit usage (%), reset time and per-product shares as attributes | Grok CLI billing endpoint, `GROK_USAGE_INTERVAL` |
 
 Run only the collectors that apply. Energy is `total_increasing` kWh integrated in RAM and resets on start; HA expects that. Processing times publish full precision with 1 decimal displayed; do not average.
 
@@ -37,7 +38,7 @@ Run only the collectors that apply. Energy is `total_increasing` kWh integrated 
 - **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; retained discovery is cleared when a node disappears. `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
 - **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`).
 
-Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
+Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`; `grok` uses `sensor/grok/availability` with no host; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
 
 ## XMRig
 
@@ -197,6 +198,17 @@ The collector only reads sysfs and does not apply the quirk. An administrator ca
 
 Why not `smartctl -d sat`: a root subprocess per sample and a new package (AGENT.md, SECURITY.md), and it would send the same commands.
 
+## Grok usage
+
+`grok_usage.py` polls the endpoint the official Grok CLI uses for `/usage` (`GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`) every `GROK_USAGE_INTERVAL` seconds over one held connection, with the bearer token from the CLI's login file. State is `creditUsagePercent` (full precision); attributes are `reset` (`currentPeriod.end`), `period` and each `productUsage` share by product name. HA name `Grok Usage` on its own HA device `Grok` (identifier `grok`), global object `grok_usage` and availability `sensor/grok/availability` (no hostname): the subscription is not a host metric. Run it on one host only.
+
+1. Install the Grok CLI ([xai-org/grok-build](https://github.com/xai-org/grok-build)) as the user whose subscription it is.
+2. `grok login --device-auth` as that user. It writes `~/.grok/auth.json`.
+3. Set `GROK_AUTH_PATH` to that file's absolute path and `GROK_USAGE_INTERVAL` (e.g. `240`) in `.env`.
+4. `systemctl enable --now /root/mqtt-sensors/grok_usage.service`
+
+The file is re-read on every poll and never written. The collector does not refresh the token: the CLI's refresh tokens are single-use and rotated under its own lock, so a second refresher would invalidate the CLI's login. When the CLI runs, it refreshes and rewrites the file, and the collector picks that up. When the access token has expired, the endpoint answers 401 and the collector exits with the status and body; systemd keeps restarting it until you run `grok login --device-auth` again.
+
 ## Configuration
 
 `.env` in the working directory (or the environment). Empty means unset.
@@ -229,6 +241,9 @@ OLLAMA_SWITCH_MODE=read_only
 DRIVE_TEMPERATURE_INTERVAL=60
 DRIVE_TEMPERATURE_DEBUG=
 
+GROK_AUTH_PATH=
+GROK_USAGE_INTERVAL=240
+
 LHM_URL=
 ```
 
@@ -255,6 +270,9 @@ LHM_URL=
 | **Drive temperature** | |
 | `DRIVE_TEMPERATURE_INTERVAL` | seconds between reads (default 60) |
 | `DRIVE_TEMPERATURE_DEBUG` | `1` prints SG_IO diagnostics |
+| **Grok usage** | |
+| `GROK_AUTH_PATH` | absolute path to the Grok CLI's `auth.json` (`~/.grok/auth.json` of the user who ran `grok login`); required by `grok_usage.py` |
+| `GROK_USAGE_INTERVAL` | seconds between polls; required by `grok_usage.py`. Keep it under the endpoint's idle timeout (dropped between 250 and 290 s in testing), or every poll hits a closed connection and the collector exits |
 | **Windows** | |
 | `LHM_URL` | LibreHardwareMonitor web server origin, required by `windows/cpu_package_power.py` |
 
