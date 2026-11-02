@@ -32,7 +32,8 @@ def kmsg():
     finally:
         os.close(fd)
 
-code, reason = re.search(r"Previous system reset reason \[(0x[0-9a-fA-F]+)\]: (.*)", kmsg()).groups()
+match = re.search(r"Previous system reset reason \[(0x[0-9a-fA-F]+)\]: (.*)", kmsg())
+code, reason = match.groups() if match else (None, "clean shutdown")
 print(f"kmsg_reset_reason: host={HOSTNAME} code={code} reason={reason}", flush=True)
 
 client = create_client(CLIENT_ID, settings)
