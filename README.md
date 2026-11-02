@@ -99,7 +99,7 @@ If you sshfs as a user who is already on a seat, they were already in the list; 
 
 ## Previous system reset reason
 
-`kmsg_reset_reason.py` reads the current boot's kernel ring buffer from `/dev/kmsg` once, finds `x86/amd: Previous system reset reason [0x…]: …` and publishes the reason text as state with the raw hex as the `code` attribute, all retained, then exits. No availability topic, so the value stays after the process ends. AMD hosts only: without that line (other CPU, older kernel) it crashes; do not enable it there.
+`kmsg_reset_reason.py` reads the current boot's kernel ring buffer from `/dev/kmsg` once, finds `x86/amd: Previous system reset reason [0x…]: …` and publishes the reason text as state with the raw hex as the `code` attribute, all retained, then exits. No availability topic, so the value stays after the process ends. Without that line (clean poweroff) it publishes `clean shutdown` with a null `code`. AMD hosts only: on other CPUs or older kernels the line never appears, so it would always say `clean shutdown`; do not enable it there.
 
 `kmsg_reset_reason.service` is `Type=oneshot` after `network-online.target`; `Restart=on-failure` covers a broker that is not up yet. Enable it so it runs on every boot (`--now` also publishes the current boot):
 
