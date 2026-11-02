@@ -38,7 +38,7 @@ Run only the collectors that apply. Energy is `total_increasing` kWh integrated 
 - **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; retained discovery is cleared when a node disappears. `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
 - **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`).
 
-Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`, `grok`; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
+Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`; `grok` uses `sensor/grok/availability` with no host; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
 
 ## XMRig
 
@@ -200,7 +200,7 @@ Why not `smartctl -d sat`: a root subprocess per sample and a new package (AGENT
 
 ## Grok usage
 
-`grok_usage.py` polls the endpoint the official Grok CLI uses for `/usage` (`GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`) every `GROK_USAGE_INTERVAL` seconds over one held connection, with the bearer token from the CLI's login file. State is `creditUsagePercent` (full precision); attributes are `reset` (`currentPeriod.end`), `period` and each `productUsage` share by product name. HA name `Grok Usage`, object `grok_usage_<host>`.
+`grok_usage.py` polls the endpoint the official Grok CLI uses for `/usage` (`GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`) every `GROK_USAGE_INTERVAL` seconds over one held connection, with the bearer token from the CLI's login file. State is `creditUsagePercent` (full precision); attributes are `reset` (`currentPeriod.end`), `period` and each `productUsage` share by product name. HA name `Grok Usage` on its own HA device `Grok` (identifier `grok`), global object `grok_usage` and availability `sensor/grok/availability` (no hostname): the subscription is not a host metric. Run it on one host only.
 
 1. Install the Grok CLI ([xai-org/grok-build](https://github.com/xai-org/grok-build)) as the user whose subscription it is.
 2. `grok login --device-auth` as that user. It writes `~/.grok/auth.json`.
