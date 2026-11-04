@@ -220,6 +220,8 @@ Why not `smartctl -d sat`: a root subprocess per sample and a new package (AGENT
 
 The file is re-read on every poll and never written. The collector does not refresh the token: the CLI's refresh tokens are single-use and rotated under its own lock, so a second refresher would invalidate the CLI's login. When the CLI runs, it refreshes and rewrites the file, and the collector picks that up. When the access token has expired, the endpoint answers 401 and the collector exits with the status and body; systemd keeps restarting it until you run `grok login --device-auth` again.
 
+The access token lasts only hours. `grok models` triggers the CLI's own refresh (under its lock) without a prompt. To run it hourly as the CLI user, copy `user/grok-auth-refresh.service` and `user/grok-auth-refresh.timer` to `~/.config/systemd/user/`, then `systemctl --user enable --now grok-auth-refresh.timer` and `loginctl enable-linger $USER`. If a refresh is rejected, the CLI deletes `auth.json` and `grok login` is needed again.
+
 ## Configuration
 
 `.env` in the working directory (or the environment). Empty means unset.

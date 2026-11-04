@@ -1,0 +1,4 @@
+[Service]
+Type=oneshot
+Environment=GROK_AUTH_EARLY_INVALIDATION_SECS=7200
+ExecStart=%h/.grok/bin/grok models
