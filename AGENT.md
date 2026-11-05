@@ -70,6 +70,8 @@ Hardware stats (monitor-only CoolerControl replacement) are allowed many sensors
 - `xmrig_status.service` — `/root/mqtt-sensors`
 - `grok_usage.py` — held HTTPS to `cli-chat-proxy.grok.com` `/v1/billing?format=credits` (the Grok CLI's `/usage` source) every `GROK_USAGE_INTERVAL` s (below the server's ~250–290 s keep-alive idle drop); bearer `key` from the `https://auth.x.ai::*` entry of the CLI's `auth.json` at `GROK_AUTH_PATH`, re-read each poll, never written or refreshed; non-200 exits; `creditUsagePercent` as `%` (no device_class, full precision), `reset`/`period`/per-product shares as attributes; omitted proto3 zeros read as 0 like the CLI; own HA device `Grok` (identifier `grok`), global object id `grok_usage` and availability `sensor/grok/availability` (no hostname)
 - `grok_usage.service` — `/root/mqtt-sensors`
+- `user/` — systemd user units, not root system units
+- `user/grok-auth-refresh.service` + `.timer` — hourly `grok models` as the CLI user to keep its login fresh for `grok_usage.py`
 - `support/` — helpers that publish MQTT for this project but are not host collectors; global MQTT object ids / unique_ids (no hostname). Client id may still include hostname so two hosts do not collide if both run a helper
 - `support/xmr_eur_price.py` — held HTTPS to Kraken public `XMREUR` ticker, last trade as EUR, own HA device `XMR/EUR`, global object id `xmr_eur_price` (no hostname), 60 s poll
 - `support/xmr_eur_price.service` — `/root/mqtt-sensors`
