@@ -19,12 +19,18 @@ STATS = [
     ("clocks.gr", "core_clock", "Core Clock", "MHz", "frequency"),
     ("clocks.mem", "memory_clock", "Memory Clock", "MHz", "frequency"),
     ("utilization.gpu", "utilization", "Utilization", "%", None),
-    ("utilization.memory", "memory_utilization", "Memory Utilization", "%", None),
+    ("utilization.memory", "memory_bandwidth", "Memory Bandwidth", "%", None),
+    ("memory.used", "memory_used_percent", "Memory Used", "%", None),
     ("power.limit", "power_limit", "Power Limit", "W", "power"),
     ("pstate", "pstate", "Performance State", None, None),
     ("clocks_throttle_reasons.active", "throttle_reasons", "Throttle Reasons", None, None),
 ] if os.environ["NVIDIA_GPU_STATS"] else []
-FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS])
+FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS] + (["memory.total"] if STATS else []))
+
+def stat_value(extra, i):
+    if STATS[i][0] == "memory.used":
+        return str(float(extra[i]) / float(extra[-1]) * 100)
+    return extra[i]
 
 def clean_gpu_name(name):
     name = re.sub(r"^NVIDIA\s+", "", name, flags=re.I)
@@ -160,7 +166,7 @@ try:
         client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}", retain=True)
         for i, state, _, _ in g["stats"]:
             if not sample["extra"][i].startswith("["):
-                client.publish(state, sample["extra"][i], retain=True)
+                client.publish(state, stat_value(sample["extra"], i), retain=True)
 
     while True:
         sample = read_sample(proc, expected_count=expected)
@@ -179,7 +185,7 @@ try:
             client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}", retain=True)
         for i, state, _, _ in g["stats"]:
             if not s["extra"][i].startswith("["):
-                client.publish(state, s["extra"][i], retain=True)
+                client.publish(state, stat_value(s["extra"], i), retain=True)
 except Exception:
     pass
 finally:
