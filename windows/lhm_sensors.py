@@ -3,7 +3,7 @@
 
 Linux reference: hwmon_sensors.py. Read path is not shared.
 """
-import json, os, re, sys, time, http.client
+import json, math, os, re, sys, time, http.client
 from pathlib import Path
 from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -33,8 +33,11 @@ def slug(text):
 
 def parse_value(value):
     if isinstance(value, (int, float)):
-        return float(value)
-    num = re.match(r"\s*([+-]?[0-9][0-9.,]*)", value).group(1)
+        return float(value) if math.isfinite(value) else None
+    match = re.match(r"\s*([+-]?[0-9][0-9.,]*)", value) if isinstance(value, str) else None
+    if not match:
+        return None
+    num = match.group(1)
     if "," in num and "." in num:
         if num.rfind(",") > num.rfind("."):
             num = num.replace(".", "").replace(",", ".")
@@ -42,13 +45,17 @@ def parse_value(value):
             num = num.replace(",", "")
     elif "," in num:
         num = num.replace(",", ".")
-    return float(num)
+    try:
+        number = float(num)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
 
 def walk(node, hardware, out):
     if node.get("HardwareId"):
         hardware = node["Text"]
     if node.get("Type") in KINDS and node.get("SensorId"):
-        out.append((node["SensorId"], hardware, node["Text"], node["Type"], node["RawValue"]))
+        out.append((node["SensorId"], hardware, node["Text"], node["Type"], node.get("RawValue")))
     for child in node["Children"]:
         walk(child, hardware, out)
     return out
@@ -99,7 +106,9 @@ try:
         for sid, _, _, _, raw in read_all():
             s = sensors.get(sid)
             if s:
-                client.publish(s["state"], str(round(parse_value(raw)) if s["fan"] else parse_value(raw)), retain=True)
+                value = parse_value(raw)
+                if value is not None:
+                    client.publish(s["state"], str(round(value) if s["fan"] else value), retain=True)
         time.sleep(5.0)
 except KeyboardInterrupt:
     pass
