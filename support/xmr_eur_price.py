@@ -54,7 +54,7 @@ client.loop_start()
 
 try:
     while True:
-        client.publish(STATE, format(spot(), ".15g"))
+        client.publish(STATE, format(spot(), ".15g"), retain=True)  # retained: read at startup by xmrig_status
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass

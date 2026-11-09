@@ -33,8 +33,8 @@ def act(payload):
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(f"{PREFIX}/status")
-        client.publish(OLD_CONFIG, "", retain=True)
-        client.publish(OLD_STATE, "", retain=True)
+        client.publish(OLD_CONFIG, "", retain=True)  # retained: clear stored message
+        client.publish(OLD_STATE, "", retain=True)  # retained: clear stored message
         client.publish(CONFIG, json.dumps(DISCOVERY))
         client.subscribe(CMD)
         client.publish(AVAIL_T, "online")

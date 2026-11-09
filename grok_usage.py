@@ -56,8 +56,8 @@ try:
         cfg = usage()
         attrs = {"reset": cfg["currentPeriod"]["end"], "period": cfg["currentPeriod"]["type"]}
         attrs.update({p["product"]: p.get("usagePercent", 0.0) for p in cfg.get("productUsage", [])})
-        client.publish(ATTRS, json.dumps(attrs))
-        client.publish(STATE, str(cfg.get("creditUsagePercent", 0.0)))
+        client.publish(ATTRS, json.dumps(attrs), retain=True)  # retained: slow interval
+        client.publish(STATE, str(cfg.get("creditUsagePercent", 0.0)), retain=True)  # retained: slow interval
         time.sleep(INTERVAL)
 except KeyboardInterrupt:
     pass

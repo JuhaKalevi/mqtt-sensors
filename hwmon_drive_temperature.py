@@ -150,7 +150,7 @@ def drop_drive(name):
         d["fd"].close()
     except OSError:
         pass
-    client.publish(d["config"], "", retain=True)
+    client.publish(d["config"], "", retain=True)  # retained: clear stored message
 
 def sync_drives():
     present = set()
@@ -356,7 +356,7 @@ def poll_sat(s):
         log(f"{s['name']}: power mode unknown ({err}), reading anyway; may keep drive spinning")
     _, t = read_smart(s, s["op"])
     if t is not None:
-        client.publish(s["state"], "%.1f" % t)
+        client.publish(s["state"], "%.1f" % t, retain=True)  # retained: slow interval
 
 def candidate(b):
     return read_opt(b / "removable") != "1" and read_opt(b / "size") not in ("", "0")
@@ -383,7 +383,7 @@ def drop_sat(name):
     if s["mode"] in ("probe", "standby", "sat"):
         os.close(s["fd"])
     if "config" in s and s["obj"] not in {d["obj"] for d in drives.values()}:
-        client.publish(s["config"], "", retain=True)
+        client.publish(s["config"], "", retain=True)  # retained: clear stored message
 
 def sync_sat():
     covered = {d["dev"] for d in drives.values()}
@@ -432,7 +432,7 @@ try:
                 val = int(d["fd"].read())
             except (OSError, ValueError):
                 continue
-            client.publish(d["state"], "%.1f" % (val / 1000.0))
+            client.publish(d["state"], "%.1f" % (val / 1000.0), retain=True)  # retained: slow interval
         sync_sat()
         if collecting_quirks:
             log_quirk_suggestions()

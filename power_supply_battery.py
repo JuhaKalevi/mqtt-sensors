@@ -74,7 +74,7 @@ def clear_legacy(d, key):
     legacy = f"power_supply_{d.name}_{HOSTNAME}"
     if legacy == object_id(key) or legacy in cleared:
         return
-    client.publish(f"{PREFIX}/sensor/{legacy}/config", "", retain=True)
+    client.publish(f"{PREFIX}/sensor/{legacy}/config", "", retain=True)  # retained: clear stored message
     cleared.add(legacy)
 
 def drop_battery(key):
@@ -85,7 +85,7 @@ def drop_battery(key):
         b["fd"].close()
     except OSError:
         pass
-    client.publish(b["config"], "", retain=True)
+    client.publish(b["config"], "", retain=True)  # retained: clear stored message
 
 def choose(dirs):
     return sorted(dirs, key=lambda d: (read_opt(d / "scope") == "System", d.name))[0]

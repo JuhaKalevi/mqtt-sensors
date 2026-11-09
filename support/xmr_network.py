@@ -85,10 +85,10 @@ client.loop_start()
 try:
     while True:
         difficulty, net_hr, reward, rate = metrics()
-        client.publish(STATE_DIFF, str(difficulty))
-        client.publish(STATE_HR, format(net_hr, ".15g"))
-        client.publish(STATE_REW, format(reward, ".15g"))
-        client.publish(STATE_RATE, format(rate, ".15g"))
+        client.publish(STATE_DIFF, str(difficulty), retain=True)  # retained: slow interval
+        client.publish(STATE_HR, format(net_hr, ".15g"), retain=True)  # retained: slow interval
+        client.publish(STATE_REW, format(reward, ".15g"), retain=True)  # retained: slow interval
+        client.publish(STATE_RATE, format(rate, ".15g"), retain=True)  # retained: read at startup by xmrig_status
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass

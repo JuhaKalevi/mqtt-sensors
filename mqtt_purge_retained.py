@@ -36,7 +36,7 @@ print(f"{len(retained)} retained topic(s) {'for ' + args.hostname if not args.al
 
 if args.delete:
     for topic in sorted(retained):
-        client.publish(topic, b"", qos=1, retain=True).wait_for_publish()
+        client.publish(topic, b"", qos=1, retain=True).wait_for_publish()  # retained: clear stored message
     print(f"cleared {len(retained)} topic(s)")
 elif retained:
     print("dry run; add --delete to clear them")

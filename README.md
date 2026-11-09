@@ -48,7 +48,7 @@ Needs the XMRig HTTP API (`XMRIG_HOST`/`XMRIG_PORT`, `XMRIG_TOKEN` when set). Th
 - **Switch:** `ON` resumes, `OFF` pauses.
 - **Intensity:** threads = `floor(percent * max_threads / 100)` on the active CPU profile via `GET/PUT /2/config`; `max_threads` is the OS logical CPU count (`os.cpu_count()`), never XMRig's current or configured thread count, so a profile saved below 100% (autosave) cannot shrink it; a shorter list profile is padded with affinity `-1` entries. The minimum is 1 thread (0% sets 1); the mining switch pauses. With XMRig `autosave`, it persists to `config.json`.
 - **Reject ratio:** `(shares_total - shares_good) / shares_total`.
-- **Profitability factor:** `revenue / cost` (1.0 ≈ break-even), revenue `hashrate * xmr_per_hs_day / 24 * xmr_eur`, cost `mining_W / 1000 * €/kWh`. Needs a spot price source (see Configuration) plus retained MQTT package power, `xmr_per_hs_day` and XMR/EUR; missing inputs are printed once a minute. Publish-only, no automation.
+- **Profitability factor:** `revenue / cost` (1.0 ≈ break-even), revenue `hashrate * xmr_per_hs_day / 24 * xmr_eur`, cost `mining_W / 1000 * €/kWh`. Needs a spot price source (see Configuration) plus MQTT package power (every second, not retained), and retained `xmr_per_hs_day` and XMR/EUR; missing inputs are printed once a minute. Publish-only, no automation.
 - **Mining power:** raw `package_W` until a 100%-intensity baseline exists. The baseline is the max `package_W` over the first ~5 min at 100% (not paused), or `XMRIG_POWER_BASELINE_W` right away. Then `package_W` at 100%, `min(package_W, f * baseline)` when `f = threads/max_threads < 1`, 0 at 0%. While paused, the last hashrate and mining watts are kept in RAM.
 
 Contention handling is shared by Linux and Windows (`MiningIntensity` and `Contention` in `xmrig_common.py`) and runs with `XMRIG_CONTENTION_MODE=control`. `f = threads / max_threads`; hashrate means the 30 s average of the 10 s hashrate.
@@ -224,7 +224,9 @@ The access token lasts only hours. `grok models` triggers the CLI's own refresh 
 
 ## Retained messages
 
-Nothing is published retained. Collectors subscribe to `<prefix>/status` and republish discovery and `online` when Home Assistant announces `online`, so HA picks them up again after a restart. A sensor whose collector is gone can be deleted in HA.
+Publish is not retained unless there is a clear, commented reason. Discovery configs and availability are never retained: collectors subscribe to `<prefix>/status` and republish them when Home Assistant announces `online`. A sensor whose collector is gone can be deleted in HA (after any leftover retained messages are cleared).
+
+The exceptions: `kmsg_reset_reason.py` retains config, attributes and state because it is run-once; `xmr_eur_price` and `xmr_per_hs_day` retain state so `xmrig_status` can read them at startup (same 60 s interval for the other `xmr_network` states); `grok_usage` and `hwmon_drive_temperature` retain state (and grok attributes) because they publish at 60 s or slower. Package power is published every second and is not retained. `ELECTRICITY_EUR_PER_KWH_TOPIC`, when used, is an external topic this repo does not publish.
 
 Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host.
 
