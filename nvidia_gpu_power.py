@@ -184,9 +184,9 @@ try:
             g["energy_wh"] += power * (dt / 3600.0)
             client.publish(g["state_p"], f"{power:.1f}")
             client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}")
-        for i, state, _, _ in g["stats"]:
-            if not s["extra"][i].startswith("["):
-                client.publish(state, stat_value(s["extra"], i))
+            for i, state, _, _ in g["stats"]:
+                if not s["extra"][i].startswith("["):
+                    client.publish(state, stat_value(s["extra"], i))
 except Exception:
     pass
 finally:
