@@ -222,6 +222,17 @@ The file is re-read on every poll and never written. The collector does not refr
 
 The access token lasts only hours. `grok models` triggers the CLI's own refresh (under its lock) without a prompt. To run it hourly as the CLI user, copy `user/grok-auth-refresh.service` and `user/grok-auth-refresh.timer` to `~/.config/systemd/user/`, then `systemctl --user enable --now grok-auth-refresh.timer` and `loginctl enable-linger $USER`. If a refresh is rejected, the CLI deletes `auth.json` and `grok login` is needed again.
 
+## Retained messages
+
+Nothing is published retained. Collectors subscribe to `<prefix>/status` and republish discovery and `online` when Home Assistant announces `online`, so HA picks them up again after a restart. A sensor whose collector is gone can be deleted in HA.
+
+Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host.
+
+```sh
+python3 mqtt_purge_retained.py
+python3 mqtt_purge_retained.py --delete
+```
+
 ## Configuration
 
 `.env` in the working directory (or the environment). Empty means unset.

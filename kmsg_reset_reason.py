@@ -40,9 +40,9 @@ client = create_client(CLIENT_ID, settings)
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 for info in [
-    client.publish(CONFIG, json.dumps(DISCOVERY), qos=1, retain=True),
-    client.publish(ATTRS, json.dumps({"code": code}), qos=1, retain=True),
-    client.publish(STATE, reason, qos=1, retain=True),
+    client.publish(CONFIG, json.dumps(DISCOVERY), qos=1),
+    client.publish(ATTRS, json.dumps({"code": code}), qos=1),
+    client.publish(STATE, reason, qos=1),
 ]:
     info.wait_for_publish()
 client.loop_stop()

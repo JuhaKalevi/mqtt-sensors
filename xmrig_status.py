@@ -288,7 +288,7 @@ def auto_threads(n, target):
     except BaseException as err:
         print(f"xmrig_status: XMRig thread change {n} -> {target} failed: {err!r}", flush=True)
         raise
-    info = client.publish(STATE_INT, str(target * 100 // max_threads), retain=True)
+    info = client.publish(STATE_INT, str(target * 100 // max_threads))
     if info.rc != 0:
         print(f"xmrig_status: intensity slider publish failed rc={info.rc}", flush=True)
 
@@ -324,11 +324,11 @@ def publish_stats(data):
     shares = int(data["results"]["shares_total"])
     rej = 0.0 if shares == 0 else (shares - good) * 100.0 / shares
     paused = bool(data["paused"])
-    client.publish(STATE_HR, format(hr, ".15g"), retain=True)
-    client.publish(STATE_REJ, format(rej, ".15g"), retain=True)
-    client.publish(STATE_SW, "OFF" if paused else "ON", retain=True)
+    client.publish(STATE_HR, format(hr, ".15g"))
+    client.publish(STATE_REJ, format(rej, ".15g"))
+    client.publish(STATE_SW, "OFF" if paused else "ON")
     mining_w = attributed_power(paused, data)
-    client.publish(STATE_INT, str(current_intensity_percent()), retain=True)
+    client.publish(STATE_INT, str(current_intensity_percent()))
     if not PROFIT_WANTED:
         return
     now = time.monotonic()
@@ -355,17 +355,20 @@ def publish_stats(data):
             last_missing_print = now
         return
     if not pf_discovered:
-        client.publish(CONFIG_PF, json.dumps(DISCOVERY_PF), retain=True)
+        client.publish(CONFIG_PF, json.dumps(DISCOVERY_PF))
         pf_discovered = True
         print(f"xmrig_status: profitability factor online (value {factor:.6g})", flush=True)
-    client.publish(STATE_PF, format(factor, ".15g"), retain=True)
+    client.publish(STATE_PF, format(factor, ".15g"))
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR), retain=True)
-        client.publish(CONFIG_REJ, json.dumps(DISCOVERY_REJ), retain=True)
-        client.publish(CONFIG_SW, json.dumps(DISCOVERY_SW), retain=True)
-        client.publish(CONFIG_INT, json.dumps(DISCOVERY_INT), retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR))
+        client.publish(CONFIG_REJ, json.dumps(DISCOVERY_REJ))
+        client.publish(CONFIG_SW, json.dumps(DISCOVERY_SW))
+        client.publish(CONFIG_INT, json.dumps(DISCOVERY_INT))
+        if pf_discovered:
+            client.publish(CONFIG_PF, json.dumps(DISCOVERY_PF))
         client.subscribe(CMD_SW)
         client.subscribe(CMD_INT)
         if PROFIT_WANTED or CONTENTION:
@@ -375,7 +378,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.subscribe(TOPIC_EUR)
             if SPOT_TOPIC:
                 client.subscribe(SPOT_TOPIC)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.publish(AVAIL_T, "online")
 
 def on_message(client, userdata, msg):
     global power_w, xmr_rate, xmr_eur, spot, pending_intensity
@@ -422,7 +425,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     conn.close()

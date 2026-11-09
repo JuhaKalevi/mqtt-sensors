@@ -47,9 +47,10 @@ def open_log(from_end):
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_TIME, json.dumps(DISCOVERY_TIME), retain=True)
-        client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG_TIME, json.dumps(DISCOVERY_TIME))
+        client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -63,8 +64,8 @@ try:
         if line:
             m = LINE.search(line)
             if m:
-                client.publish(STATE_TIME, format(float(m.group(1)), ".15g"), retain=True)
-                client.publish(STATE_PLOTS, m.group(2), retain=True)
+                client.publish(STATE_TIME, format(float(m.group(1)), ".15g"))
+                client.publish(STATE_PLOTS, m.group(2))
             continue
         try:
             cur = os.stat(LOG).st_ino
@@ -80,7 +81,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     f.close()

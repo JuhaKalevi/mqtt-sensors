@@ -33,8 +33,9 @@ def active_users():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG, json.dumps(DISCOVERY), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG, json.dumps(DISCOVERY))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -43,11 +44,11 @@ client.loop_start()
 
 try:
     while True:
-        client.publish(STATE, active_users(), retain=True)
+        client.publish(STATE, active_users())
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()

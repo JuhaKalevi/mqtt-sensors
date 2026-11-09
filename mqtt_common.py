@@ -111,7 +111,7 @@ def make_switch_on_message(tag, mode, state_topic, get_state, act):
             act(payload)
         else:
             print(f"{tag}: ignored {payload!r} (mode={mode})", flush=True)
-        client.publish(state_topic, get_state(), retain=True)
+        client.publish(state_topic, get_state())
     return on_message
 
 class SystemdServiceManager:
@@ -180,10 +180,15 @@ class LogindSessionSource:
 def session_source():
     return LogindSessionSource()
 
+def on_ha_status(client, userdata, msg):
+    if msg.payload == b"online" and not msg.retain and client.on_connect:
+        client.on_connect(client, userdata, None, 0, None)
+
 def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
     if settings["user"]:
         client.username_pw_set(settings["user"], settings["password"])
     if will_topic:
-        client.will_set(will_topic, will_payload, qos=1, retain=True)
+        client.will_set(will_topic, will_payload, qos=1)
     return client

@@ -165,7 +165,7 @@ def sync_drives():
         if not d:
             continue
         drives[hw.name] = d
-        client.publish(d["config"], json.dumps(d["discovery"]), retain=True)
+        client.publish(d["config"], json.dumps(d["discovery"]))
     for name in list(drives):
         if name not in present:
             drop_drive(name)
@@ -329,7 +329,7 @@ def setup_sat(s):
     if not ids:
         return "no stable serial, wwid or USB serial"
     s.update(entry(ids))
-    client.publish(s["config"], json.dumps(s["discovery"]), retain=True)
+    client.publish(s["config"], json.dumps(s["discovery"]))
     s["mode"] = "sat"
     log(f"{s['name']}: reading via SAT {op_name(s['op'])}, {s['label']}")
     return None
@@ -356,7 +356,7 @@ def poll_sat(s):
         log(f"{s['name']}: power mode unknown ({err}), reading anyway; may keep drive spinning")
     _, t = read_smart(s, s["op"])
     if t is not None:
-        client.publish(s["state"], "%.1f" % t, retain=True)
+        client.publish(s["state"], "%.1f" % t)
 
 def candidate(b):
     return read_opt(b / "removable") != "1" and read_opt(b / "size") not in ("", "0")
@@ -407,9 +407,10 @@ def sync_sat():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
+        client.subscribe(f"{PREFIX}/status")
         for d in list(drives.values()) + [s for s in sat_drives.values() if s["mode"] == "sat"]:
-            client.publish(d["config"], json.dumps(d["discovery"]), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+            client.publish(d["config"], json.dumps(d["discovery"]))
+        client.publish(AVAIL_T, "online")
 
 hwmons = [hw for hw in ROOT.iterdir() if read_opt(hw / "name") in ("drivetemp", "nvme")]
 disks = [b for b in BLOCK.glob("sd*") if candidate(b)]
@@ -431,7 +432,7 @@ try:
                 val = int(d["fd"].read())
             except (OSError, ValueError):
                 continue
-            client.publish(d["state"], "%.1f" % (val / 1000.0), retain=True)
+            client.publish(d["state"], "%.1f" % (val / 1000.0))
         sync_sat()
         if collecting_quirks:
             log_quirk_suggestions()
@@ -440,7 +441,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     for d in drives.values():

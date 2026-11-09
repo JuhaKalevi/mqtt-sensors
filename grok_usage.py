@@ -42,8 +42,9 @@ def usage():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG, json.dumps(DISCOVERY), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG, json.dumps(DISCOVERY))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -55,13 +56,13 @@ try:
         cfg = usage()
         attrs = {"reset": cfg["currentPeriod"]["end"], "period": cfg["currentPeriod"]["type"]}
         attrs.update({p["product"]: p.get("usagePercent", 0.0) for p in cfg.get("productUsage", [])})
-        client.publish(ATTRS, json.dumps(attrs), retain=True)
-        client.publish(STATE, str(cfg.get("creditUsagePercent", 0.0)), retain=True)
+        client.publish(ATTRS, json.dumps(attrs))
+        client.publish(STATE, str(cfg.get("creditUsagePercent", 0.0)))
         time.sleep(INTERVAL)
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     conn.close()

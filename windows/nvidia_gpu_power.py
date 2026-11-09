@@ -116,12 +116,13 @@ expected = len(gpus)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
+        client.subscribe(f"{PREFIX}/status")
         for g in gpus:
-            client.publish(g["config_p"], json.dumps(g["disc_p"]), retain=True)
-            client.publish(g["config_e"], json.dumps(g["disc_e"]), retain=True)
+            client.publish(g["config_p"], json.dumps(g["disc_p"]))
+            client.publish(g["config_e"], json.dumps(g["disc_e"]))
             for _, _, config, disc in g["stats"]:
-                client.publish(config, json.dumps(disc), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+                client.publish(config, json.dumps(disc))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -150,14 +151,14 @@ def publish(sample):
         if not g:
             continue
         g["energy_wh"] += s["power"] * (dt / 3600.0)
-        client.publish(g["state_p"], f"{s['power']:.1f}", retain=True)
-        client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}", retain=True)
+        client.publish(g["state_p"], f"{s['power']:.1f}")
+        client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}")
         for i, state, _, _ in g["stats"]:
             if not s["extra"][i].startswith("["):
-                client.publish(state, stat_value(s["extra"], i), retain=True)
+                client.publish(state, stat_value(s["extra"], i))
 
 def stop():
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     if proc.poll() is None:

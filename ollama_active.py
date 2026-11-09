@@ -30,9 +30,10 @@ def act(payload):
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG, json.dumps(DISCOVERY), retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG, json.dumps(DISCOVERY))
         client.subscribe(CMD)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.publish(AVAIL_T, "online")
 
 print(f"ollama_active: host={HOSTNAME} mode={MODE}", flush=True)
 
@@ -44,11 +45,11 @@ client.loop_start()
 
 try:
     while True:
-        client.publish(STATE, state(), retain=True)
+        client.publish(STATE, state())
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()

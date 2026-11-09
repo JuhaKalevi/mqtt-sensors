@@ -103,9 +103,10 @@ DISCOVERY_ENERGY = make_energy_discovery(
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_POWER, json.dumps(DISCOVERY_POWER), retain=True)
-        client.publish(CONFIG_ENERGY, json.dumps(DISCOVERY_ENERGY), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG_POWER, json.dumps(DISCOVERY_POWER))
+        client.publish(CONFIG_ENERGY, json.dumps(DISCOVERY_ENERGY))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -117,7 +118,7 @@ t_prev = time.monotonic()
 conn = http.client.HTTPConnection(LHM.hostname, LHM.port, timeout=5)
 
 def stop():
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     conn.close()
@@ -130,8 +131,8 @@ try:
         dt = max(t_now - t_prev, 0.001)
         t_prev = t_now
         energy_wh += power * (dt / 3600.0)
-        client.publish(STATE_POWER, f"{power:.1f}", retain=True)
-        client.publish(STATE_ENERGY, f"{energy_wh / 1000.0:.6f}", retain=True)
+        client.publish(STATE_POWER, f"{power:.1f}")
+        client.publish(STATE_ENERGY, f"{energy_wh / 1000.0:.6f}")
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
