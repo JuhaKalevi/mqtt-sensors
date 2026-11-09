@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
-import os, json, socket, subprocess
+import os, json, socket, subprocess, threading
 from contextlib import contextmanager
 from pathlib import Path
 import paho.mqtt.client as mqtt
+
+# Non-retained availability republish while a collector is connected.
+# After a purge, HA entities recover within this interval without a restart.
+AVAILABILITY_HEARTBEAT_SEC = 60
+
 
 def load_dotenv(path=".env"):
     if not os.path.isfile(path):
@@ -184,6 +189,58 @@ def on_ha_status(client, userdata, msg):
     if msg.payload == b"online" and not msg.retain and client.on_connect:
         client.on_connect(client, userdata, None, 0, None)
 
+def _payload_bytes(payload):
+    if payload is None:
+        return b""
+    if isinstance(payload, bytes):
+        return payload
+    if isinstance(payload, bytearray):
+        return bytes(payload)
+    if isinstance(payload, str):
+        return payload.encode()
+    return str(payload).encode()
+
+
+def _start_availability_heartbeat(client, will_topic, will_payload, interval):
+    """Republish non-retained 'online' on will_topic every interval seconds.
+
+    Stops when the collector publishes the will payload (usually 'offline')
+    to will_topic, or when disconnect() is called, so a shutdown cannot be
+    followed by a late 'online'. The thread is a daemon so a short-lived
+    client cannot hang on exit.
+    """
+    stop = threading.Event()
+    lock = threading.Lock()
+    orig_publish = client.publish
+    orig_disconnect = client.disconnect
+    offline = _payload_bytes(will_payload)
+
+    def publish(topic, payload=None, *args, **kwargs):
+        if topic == will_topic and _payload_bytes(payload) == offline:
+            with lock:
+                stop.set()
+                return orig_publish(topic, payload, *args, **kwargs)
+        return orig_publish(topic, payload, *args, **kwargs)
+
+    def disconnect(*args, **kwargs):
+        with lock:
+            stop.set()
+        return orig_disconnect(*args, **kwargs)
+
+    def beat():
+        while not stop.wait(interval):
+            try:
+                with lock:
+                    if not stop.is_set() and client.is_connected():
+                        orig_publish(will_topic, "online")  # not retained
+            except Exception:
+                pass
+
+    client.publish = publish
+    client.disconnect = disconnect
+    threading.Thread(target=beat, name="mqtt-avail-heartbeat", daemon=True).start()
+
+
 def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
@@ -191,4 +248,6 @@ def create_client(client_id, settings, will_topic=None, will_payload="offline"):
         client.username_pw_set(settings["user"], settings["password"])
     if will_topic:
         client.will_set(will_topic, will_payload, qos=1)
+        interval = settings.get("availability_heartbeat_sec", AVAILABILITY_HEARTBEAT_SEC)
+        _start_availability_heartbeat(client, will_topic, will_payload, interval)
     return client
