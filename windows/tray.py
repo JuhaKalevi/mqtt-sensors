@@ -236,12 +236,12 @@ def load_enabled():
         return set()
     known = set(collectors())
     found = set()
-    for line in STATE.read_text(encoding="utf-8").splitlines():
-        name = line.strip()
+    for line in STATE.read_text(encoding="utf-8-sig").splitlines():
+        name = line.strip().strip("\ufeff\u200b")
         if not name:
             continue
         if name not in known:
-            fail(f"unknown collector {name}")
+            fail(f"unknown collector {name!r} in {STATE.name}")
         found.add(name)
     return found
 

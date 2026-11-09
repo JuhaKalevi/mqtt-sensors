@@ -26,6 +26,8 @@ Upgrading: `git pull`, add any new `.env` keys from the root example, then quit 
 
 `lhm_sensors.py` reads the same `GET /data.json` (`LHM_URL`) every 5 s on one held connection and publishes every Temperature, Fan, Voltage, Clock, Load and Control sensor as `lhm_<SensorId>_<hostname>` (includes GPU Hot Spot / Memory Junction when LHM shows them). `nvidia_gpu_power.py` adds the Linux GPU stats when `NVIDIA_GPU_STATS` is non-empty.
 
+LHM sensor IDs include the GPU index, so identical GPU models and sensor names keep separate MQTT entities without changing existing IDs. Missing, null, non-numeric and non-finite readings are skipped per sensor (including unavailable sensors on an idle GPU); valid readings from the other sensors continue publishing, and a sensor resumes when its reading returns.
+
 ```
 python windows/lhm_sensors.py
 ```
