@@ -58,9 +58,10 @@ def find_pkg_energy():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_POWER, json.dumps(DISCOVERY_POWER), retain=True)
-        client.publish(CONFIG_ENERGY, json.dumps(DISCOVERY_ENERGY), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG_POWER, json.dumps(DISCOVERY_POWER))
+        client.publish(CONFIG_ENERGY, json.dumps(DISCOVERY_ENERGY))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -90,11 +91,11 @@ try:
         power = (delta / 1e6) / dt         # µJ → J → W
         energy_wh += power * (dt / 3600.0)
 
-        client.publish(STATE_POWER, f"{power:.1f}", retain=True)
-        client.publish(STATE_ENERGY, f"{energy_wh / 1000.0:.6f}", retain=True)
+        client.publish(STATE_POWER, f"{power:.1f}")
+        client.publish(STATE_ENERGY, f"{energy_wh / 1000.0:.6f}")
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()

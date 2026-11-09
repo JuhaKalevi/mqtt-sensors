@@ -1,6 +1,6 @@
 # Windows
 
-The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is `mqtt_common.py` (and `xmrig_common.py` for XMRig). Object ids, topics and availability match Linux (`cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, `xmrig_*_<hostname>`), so a Windows miner feeds the same MQTT names. The HA device id is `windows_host_<hostname>` (display name is the hostname).
+The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is `mqtt_common.py` (and `xmrig_common.py` for XMRig), including the no-retain rule and the availability heartbeat. Object ids, topics and availability match Linux (`cpu_package_power_<hostname>`, `gpu<N>_power_<hostname>`, `xmrig_*_<hostname>`), so a Windows miner feeds the same MQTT names. The HA device id is `windows_host_<hostname>` (display name is the hostname).
 
 Relaxed exception: a program already on the machine may be a source. No vendored driver, no pip. Fail-fast still applies.
 

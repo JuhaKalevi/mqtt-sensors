@@ -74,7 +74,7 @@ def clear_legacy(d, key):
     legacy = f"power_supply_{d.name}_{HOSTNAME}"
     if legacy == object_id(key) or legacy in cleared:
         return
-    client.publish(f"{PREFIX}/sensor/{legacy}/config", "", retain=True)
+    client.publish(f"{PREFIX}/sensor/{legacy}/config", "", retain=True)  # retained: clear stored message
     cleared.add(legacy)
 
 def drop_battery(key):
@@ -85,7 +85,7 @@ def drop_battery(key):
         b["fd"].close()
     except OSError:
         pass
-    client.publish(b["config"], "", retain=True)
+    client.publish(b["config"], "", retain=True)  # retained: clear stored message
 
 def choose(dirs):
     return sorted(dirs, key=lambda d: (read_opt(d / "scope") == "System", d.name))[0]
@@ -124,7 +124,7 @@ def sync_batteries():
             b["state"] = state
             b["config"] = config
             b["discovery"] = disc
-            client.publish(config, json.dumps(disc), retain=True)
+            client.publish(config, json.dumps(disc))
         if b:
             continue
         try:
@@ -140,16 +140,17 @@ def sync_batteries():
             "peripheral": peripheral,
             "discovery": disc,
         }
-        client.publish(config, json.dumps(disc), retain=True)
+        client.publish(config, json.dumps(disc))
     for key in list(batteries):
         if key not in groups:
             drop_battery(key)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
+        client.subscribe(f"{PREFIX}/status")
         for b in batteries.values():
-            client.publish(b["config"], json.dumps(b["discovery"]), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+            client.publish(b["config"], json.dumps(b["discovery"]))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -169,7 +170,7 @@ try:
                 val = f.read().strip()
                 if not val:
                     raise OSError("empty")
-                client.publish(b["state"], val, retain=True)
+                client.publish(b["state"], val)
             except OSError:
                 try:
                     b["fd"].close()
@@ -180,7 +181,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     for key in list(batteries):

@@ -64,9 +64,10 @@ if not sensors:
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
+        client.subscribe(f"{PREFIX}/status")
         for s in sensors:
-            client.publish(s["config"], json.dumps(s["disc"]), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+            client.publish(s["config"], json.dumps(s["disc"]))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -74,7 +75,7 @@ client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
 def cleanup(*_):
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     os._exit(0)
@@ -85,5 +86,5 @@ signal.signal(signal.SIGTERM, cleanup)
 while True:
     for s in sensors:
         v = int(os.pread(s["fd"], 32, 0))
-        client.publish(s["state"], str(v if s["scale"] == 1 else v / s["scale"]), retain=True)
+        client.publish(s["state"], str(v if s["scale"] == 1 else v / s["scale"]))
     time.sleep(5.0)

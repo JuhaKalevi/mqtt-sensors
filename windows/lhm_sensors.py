@@ -86,9 +86,10 @@ if not sensors:
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
+        client.subscribe(f"{PREFIX}/status")
         for s in sensors.values():
-            client.publish(s["config"], json.dumps(s["disc"]), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+            client.publish(s["config"], json.dumps(s["disc"]))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -96,7 +97,7 @@ client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
 def stop():
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     conn.close()
@@ -108,7 +109,7 @@ try:
             if s:
                 value = parse_value(raw)
                 if value is not None:
-                    client.publish(s["state"], str(round(value) if s["fan"] else value), retain=True)
+                    client.publish(s["state"], str(round(value) if s["fan"] else value))
         time.sleep(5.0)
 except KeyboardInterrupt:
     pass

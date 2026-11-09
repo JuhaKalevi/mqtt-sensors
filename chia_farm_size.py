@@ -92,12 +92,13 @@ def farm_stats():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS), retain=True)
-        client.publish(CONFIG_SIZE, json.dumps(DISCOVERY_SIZE), retain=True)
-        client.publish(CONFIG_EFF, json.dumps(DISCOVERY_EFF), retain=True)
-        client.publish(CONFIG_NET, json.dumps(DISCOVERY_NET), retain=True)
-        client.publish(CONFIG_ETA, json.dumps(DISCOVERY_ETA), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS))
+        client.publish(CONFIG_SIZE, json.dumps(DISCOVERY_SIZE))
+        client.publish(CONFIG_EFF, json.dumps(DISCOVERY_EFF))
+        client.publish(CONFIG_NET, json.dumps(DISCOVERY_NET))
+        client.publish(CONFIG_ETA, json.dumps(DISCOVERY_ETA))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -107,16 +108,16 @@ client.loop_start()
 try:
     while True:
         plots, size, effective, netspace, eta = farm_stats()
-        client.publish(STATE_PLOTS, str(plots), retain=True)
-        client.publish(STATE_SIZE, f"{size:.3f}", retain=True)
-        client.publish(STATE_EFF, f"{effective:.3f}", retain=True)
-        client.publish(STATE_NET, f"{netspace:.3f}", retain=True)
-        client.publish(STATE_ETA, f"{eta:.0f}", retain=True)
+        client.publish(STATE_PLOTS, str(plots))
+        client.publish(STATE_SIZE, f"{size:.3f}")
+        client.publish(STATE_EFF, f"{effective:.3f}")
+        client.publish(STATE_NET, f"{netspace:.3f}")
+        client.publish(STATE_ETA, f"{eta:.0f}")
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     farmer.close()

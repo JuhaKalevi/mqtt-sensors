@@ -36,9 +36,10 @@ for k, title in (("mouse", "Mouse APM"), ("keyboard", "Keyboard APM"), ("total",
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
+        client.subscribe(f"{PREFIX}/status")
         for _, config, disc in SENSORS.values():
-            client.publish(config, json.dumps(disc), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+            client.publish(config, json.dumps(disc))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -46,7 +47,7 @@ client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
 def cleanup(*_):
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     os._exit(0)
@@ -84,8 +85,8 @@ while True:
         for q in presses.values():
             while q and q[0] < now - 60.0:
                 q.popleft()
-        client.publish(SENSORS["mouse"][0], str(len(presses["mouse"])), retain=True)
-        client.publish(SENSORS["keyboard"][0], str(len(presses["keyboard"])), retain=True)
-        client.publish(SENSORS["total"][0], str(len(presses["mouse"]) + len(presses["keyboard"])), retain=True)
+        client.publish(SENSORS["mouse"][0], str(len(presses["mouse"])))
+        client.publish(SENSORS["keyboard"][0], str(len(presses["keyboard"])))
+        client.publish(SENSORS["total"][0], str(len(presses["mouse"]) + len(presses["keyboard"])))
         rescan()
         next_publish = now + 5.0

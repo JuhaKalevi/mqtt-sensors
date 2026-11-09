@@ -70,11 +70,12 @@ def metrics():
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        client.publish(CONFIG_DIFF, json.dumps(DISCOVERY_DIFF), retain=True)
-        client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR), retain=True)
-        client.publish(CONFIG_REW, json.dumps(DISCOVERY_REW), retain=True)
-        client.publish(CONFIG_RATE, json.dumps(DISCOVERY_RATE), retain=True)
-        client.publish(AVAIL_T, "online", retain=True)
+        client.subscribe(f"{PREFIX}/status")
+        client.publish(CONFIG_DIFF, json.dumps(DISCOVERY_DIFF))
+        client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR))
+        client.publish(CONFIG_REW, json.dumps(DISCOVERY_REW))
+        client.publish(CONFIG_RATE, json.dumps(DISCOVERY_RATE))
+        client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
@@ -84,15 +85,15 @@ client.loop_start()
 try:
     while True:
         difficulty, net_hr, reward, rate = metrics()
-        client.publish(STATE_DIFF, str(difficulty), retain=True)
-        client.publish(STATE_HR, format(net_hr, ".15g"), retain=True)
-        client.publish(STATE_REW, format(reward, ".15g"), retain=True)
-        client.publish(STATE_RATE, format(rate, ".15g"), retain=True)
+        client.publish(STATE_DIFF, str(difficulty), retain=True)  # retained: slow interval
+        client.publish(STATE_HR, format(net_hr, ".15g"), retain=True)  # retained: slow interval
+        client.publish(STATE_REW, format(reward, ".15g"), retain=True)  # retained: slow interval
+        client.publish(STATE_RATE, format(rate, ".15g"), retain=True)  # retained: read at startup by xmrig_status
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass
 finally:
-    client.publish(AVAIL_T, "offline", retain=True)
+    client.publish(AVAIL_T, "offline")
     client.loop_stop()
     client.disconnect()
     conn.close()
