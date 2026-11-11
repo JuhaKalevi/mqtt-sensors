@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PEARL/USDT market price → MQTT + Home Assistant discovery (Gate public spot ticker)."""
+"""PEARL/USDT market price → MQTT + Home Assistant discovery (Gate public spot ticker, NEAR Intents 1Click token prices)."""
 import json, os, sys, time, http.client
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -47,7 +47,16 @@ def gate():
     data = json.loads(resp.read())
     return float(data[0]["last"])
 
-SOURCES = {"gate": ("Gate Price", gate)}
+near_intents_conn = http.client.HTTPSConnection("1click.chaindefuser.com", timeout=15)
+near_intents_conn.connect()
+
+def near_intents():
+    near_intents_conn.request("GET", "/v0/tokens", headers={"User-Agent": "mqtt-sensors"})
+    resp = near_intents_conn.getresponse()
+    usd = {t["assetId"]: float(t["price"]) for t in json.loads(resp.read())}
+    return usd["nep141:prl.omft.near"] / usd["nep141:usdt.tether-token.near"]
+
+SOURCES = {"gate": ("Gate Price", gate), "near_intents": ("NEAR Intents Price", near_intents)}
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
@@ -58,7 +67,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.publish(f"{PREFIX}/sensor/{obj}/config", json.dumps(sensor(name, obj)))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -80,3 +89,4 @@ finally:
     client.loop_stop()
     client.disconnect()
     gate_conn.close()
+    near_intents_conn.close()

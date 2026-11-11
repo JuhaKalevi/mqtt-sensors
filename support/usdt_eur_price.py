@@ -60,7 +60,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.publish(f"{PREFIX}/sensor/{obj}/config", json.dumps(sensor(name, obj)))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()

@@ -8,6 +8,7 @@ import paho.mqtt.client as mqtt
 # Non-retained availability republish while a collector is connected.
 # After a purge, HA entities recover within this interval without a restart.
 AVAILABILITY_HEARTBEAT_SEC = 60
+DISCOVERY_SETTLE_SEC = 2
 
 
 def load_dotenv(path=".env"):
@@ -201,8 +202,13 @@ def _payload_bytes(payload):
     return str(payload).encode()
 
 
-def _start_availability_heartbeat(client, will_topic, will_payload, interval):
+def _start_availability_heartbeat(client, will_topic, will_payload, interval, replay_states=False):
     """Republish non-retained 'online' on will_topic every interval seconds.
+
+    Also DISCOVERY_SETTLE_SEC after each 'online' the collector publishes (on
+    connect and HA 'online'), so HA sees it once discovery has subscribed.
+    With replay_states, the last non-retained payload of every non-config
+    topic is republished with that one, for collectors that publish slowly.
 
     Stops when the collector publishes the will payload (usually 'offline')
     to will_topic, or when disconnect() is called, so a shutdown cannot be
@@ -213,6 +219,8 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval):
     lock = threading.Lock()
     orig_publish = client.publish
     orig_disconnect = client.disconnect
+    settle = threading.Event()
+    last = {}
     offline = _payload_bytes(will_payload)
 
     def publish(topic, payload=None, *args, **kwargs):
@@ -220,6 +228,10 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval):
             with lock:
                 stop.set()
                 return orig_publish(topic, payload, *args, **kwargs)
+        if topic == will_topic and _payload_bytes(payload) == b"online":
+            settle.set()
+        elif replay_states and not topic.endswith("/config") and not kwargs.get("retain", args[1] if len(args) > 1 else False):
+            last[topic] = payload
         return orig_publish(topic, payload, *args, **kwargs)
 
     def disconnect(*args, **kwargs):
@@ -228,11 +240,20 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval):
         return orig_disconnect(*args, **kwargs)
 
     def beat():
-        while not stop.wait(interval):
+        while True:
+            settled = settle.wait(interval)
+            if settled:
+                settle.clear()
+                if stop.wait(DISCOVERY_SETTLE_SEC):
+                    return
             try:
                 with lock:
-                    if not stop.is_set() and client.is_connected():
+                    if stop.is_set():
+                        return
+                    if client.is_connected():
                         orig_publish(will_topic, "online")  # not retained
+                        for topic, payload in list(last.items()) if settled else ():
+                            orig_publish(topic, payload)  # not retained
             except Exception:
                 pass
 
@@ -241,7 +262,7 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval):
     threading.Thread(target=beat, name="mqtt-avail-heartbeat", daemon=True).start()
 
 
-def create_client(client_id, settings, will_topic=None, will_payload="offline"):
+def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
     if settings["user"]:
@@ -249,5 +270,5 @@ def create_client(client_id, settings, will_topic=None, will_payload="offline"):
     if will_topic:
         client.will_set(will_topic, will_payload, qos=1)
         interval = settings.get("availability_heartbeat_sec", AVAILABILITY_HEARTBEAT_SEC)
-        _start_availability_heartbeat(client, will_topic, will_payload, interval)
+        _start_availability_heartbeat(client, will_topic, will_payload, interval, replay_states)
     return client
