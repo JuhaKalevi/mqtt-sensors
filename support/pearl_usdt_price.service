@@ -1,5 +1,5 @@
 [Service]
-ExecStart=/root/mqtt-sensors/support/pearl_eur_price.py
+ExecStart=/root/mqtt-sensors/support/pearl_usdt_price.py
 WorkingDirectory=/root/mqtt-sensors
 Restart=on-failure
 RestartSec=10

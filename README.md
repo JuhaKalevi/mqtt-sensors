@@ -31,7 +31,8 @@ Collectors on a host share one HA device `linux_host_<hostname>`, named after th
 | `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
 | `support/xmr_eur_price.py` | XMR/EUR (EUR) | Kraken public ticker, 60 s |
 | `support/xmr_network.py` | Monero difficulty, network hashrate (H/s), block reward (XMR), XMR/H/s/day | xmrchain.net, 60 s |
-| `support/pearl_eur_price.py` | PEARL/EUR (EUR) | CoinGecko public simple price, 60 s |
+| `support/pearl_usdt_price.py` | PEARL/USDT (USDT), `slippage_pct` attribute | Gate public spot ticker, 60 s |
+| `support/usdt_eur_price.py` | USDT/EUR (EUR), `slippage_pct` attribute | Kraken public ticker, 60 s |
 | `support/pearl_network.py` | Pearl difficulty, network hashrate (H/s), block reward (PEARL), PEARL/H/s/day | pearlchain.live, 60 s |
 | `grok_usage.py` | Grok subscription credit usage (%), reset time and per-product shares as attributes | Grok CLI billing endpoint, `GROK_USAGE_INTERVAL` |
 
@@ -39,9 +40,9 @@ Run only the collectors that apply. Energy is `total_increasing` kWh integrated 
 
 - **Chia:** paths are uid 1000's `.chia/mainnet` (`chia_root()`), never `/root` or a username. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2–5 s is normal. Harvester parses `plots were eligible for farming … Time: N s. Total N plots`, about every 9 s; a gap or a time climbing toward the signage window is the error signal.
 - **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; retained discovery is cleared when a node disappears. `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
-- **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Each currency pair is one market device (`XMR/EUR`, `PEARL/EUR`) that more sources or an average can join later; each coin's network stats are one device (`Monero`, `Pearl`).
+- **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Market devices are real exchange-traded pairs only (`XMR/EUR`, `PEARL/USDT`, `USDT/EUR`), one device per pair that more sources or an average can join later; a fiat value multiplies real steps (PEARL/USDT × USDT/EUR), each discounted by its own `slippage_pct` attribute (set per pair in `.env`); each coin's network stats are one device (`Monero`, `Pearl`).
 
-Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`, `pearl_eur`, `pearl_network`; `grok` uses `sensor/grok/availability` with no host; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
+Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`, `pearl_usdt`, `usdt_eur`, `pearl_network`; `grok` uses `sensor/grok/availability` with no host; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
 
 ## XMRig
 
@@ -228,7 +229,7 @@ The access token lasts only hours. `grok models` triggers the CLI's own refresh 
 
 Publish is not retained unless there is a clear, commented reason. Discovery configs and availability are never retained: collectors subscribe to `<prefix>/status` and republish them when Home Assistant announces `online`. While a collector is connected, `create_client` also republishes non-retained `online` on its availability topic every 60 s (`AVAILABILITY_HEARTBEAT_SEC` in `mqtt_common.py`). After retained availability is cleared (for example by `mqtt_purge_retained.py --delete`), entities recover within that interval without restarting the collectors. Discovery config is still republished only on connect or when HA comes back `online`; if a purge also dropped an entity in HA, it comes back on the next collector reconnect or HA restart. The heartbeat stops when the collector publishes `offline` or calls `disconnect()`, so it cannot overwrite a clean shutdown. A sensor whose collector is gone can be deleted in HA (after any leftover retained messages are cleared).
 
-The exceptions: `kmsg_reset_reason.py` retains config, attributes and state because it is run-once; `xmr_eur_price` and `xmr_per_hs_day` retain state so `xmrig_status` can read them at startup (same 60 s interval for the other `xmr_network` states); `pearl_eur_price` and the `pearl_network` states retain state for the same 60 s interval; `grok_usage` and `hwmon_drive_temperature` retain state (and grok attributes) because they publish at 60 s or slower. Package power is published every second and is not retained. `ELECTRICITY_EUR_PER_KWH_TOPIC`, when used, is an external topic this repo does not publish.
+The exceptions: `kmsg_reset_reason.py` retains config, attributes and state because it is run-once; `xmr_eur_price` and `xmr_per_hs_day` retain state so `xmrig_status` can read them at startup (same 60 s interval for the other `xmr_network` states); `pearl_usdt_price`, `usdt_eur_price` and `pearl_network` are not retained (nothing reads them at startup; HA shows a value within 60 s); `grok_usage` and `hwmon_drive_temperature` retain state (and grok attributes) because they publish at 60 s or slower. Package power is published every second and is not retained. `ELECTRICITY_EUR_PER_KWH_TOPIC`, when used, is an external topic this repo does not publish.
 
 Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host.
 
@@ -272,6 +273,9 @@ DRIVE_TEMPERATURE_DEBUG=
 GROK_AUTH_PATH=
 GROK_USAGE_INTERVAL=240
 
+PEARL_USDT_SLIPPAGE_PCT=0
+USDT_EUR_SLIPPAGE_PCT=0
+
 LHM_URL=
 ```
 
@@ -301,6 +305,8 @@ LHM_URL=
 | **Grok usage** | |
 | `GROK_AUTH_PATH` | absolute path to the Grok CLI's `auth.json` (`~/.grok/auth.json` of the user who ran `grok login`); required by `grok_usage.py` |
 | `GROK_USAGE_INTERVAL` | seconds between polls; required by `grok_usage.py`. Keep it under the endpoint's idle timeout (dropped between 250 and 290 s in testing), or every poll hits a closed connection and the collector exits |
+| **Market pairs** | |
+| `PEARL_USDT_SLIPPAGE_PCT`, `USDT_EUR_SLIPPAGE_PCT` | expected slippage (%) for that conversion step, published as the pair's `slippage_pct` attribute; required by `support/pearl_usdt_price.py` / `support/usdt_eur_price.py` (`0` for none) |
 | **Windows** | |
 | `LHM_URL` | LibreHardwareMonitor web server origin, required by `windows/cpu_package_power.py` |
 
