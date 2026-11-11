@@ -31,8 +31,8 @@ Collectors on a host share one HA device `linux_host_<hostname>`, named after th
 | `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
 | `support/xmr_eur_price.py` | XMR/EUR (EUR) | Kraken public ticker, 60 s |
 | `support/xmr_network.py` | Monero difficulty, network hashrate (H/s), block reward (XMR), XMR/H/s/day | xmrchain.net, 60 s |
-| `support/pearl_usdt_price.py` | PEARL/USDT (USDT), `slippage_pct` attribute | Gate public spot ticker, 60 s |
-| `support/usdt_eur_price.py` | USDT/EUR (EUR), `slippage_pct` attribute | Kraken public ticker, 60 s |
+| `support/pearl_usdt_price.py` | PEARL/USDT `Price` (avg/max/min of sources) + `Gate Price` (USDT) | Gate public spot ticker, 60 s |
+| `support/usdt_eur_price.py` | USDT/EUR `Price` (avg/max/min of sources) + `Kraken Price` (EUR) | Kraken public ticker, 60 s |
 | `support/pearl_network.py` | Pearl difficulty, network hashrate (H/s), block reward (PEARL), PEARL/H/s/day | pearlchain.live, 60 s |
 | `grok_usage.py` | Grok subscription credit usage (%), reset time and per-product shares as attributes | Grok CLI billing endpoint, `GROK_USAGE_INTERVAL` |
 
@@ -40,7 +40,7 @@ Run only the collectors that apply. Energy is `total_increasing` kWh integrated 
 
 - **Chia:** paths are uid 1000's `.chia/mainnet` (`chia_root()`), never `/root` or a username. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2–5 s is normal. Harvester parses `plots were eligible for farming … Time: N s. Total N plots`, about every 9 s; a gap or a time climbing toward the signage window is the error signal.
 - **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; retained discovery is cleared when a node disappears. `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
-- **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Market devices are real exchange-traded pairs only (`XMR/EUR`, `PEARL/USDT`, `USDT/EUR`), one device per pair that more sources or an average can join later; a fiat value multiplies real steps (PEARL/USDT × USDT/EUR), each discounted by its own `slippage_pct` attribute (set per pair in `.env`); each coin's network stats are one device (`Monero`, `Pearl`).
+- **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Market devices are real exchange-traded pairs only (`XMR/EUR`, `PEARL/USDT`, `USDT/EUR`), one device per pair with a generic `Price` (avg, max or min of its per-source `<Source> Price` entities, per `<BASE>_<QUOTE>_PRICE_MODE`); a fiat value multiplies real steps (PEARL/USDT × USDT/EUR), each discounted by its own `slippage_pct` attribute (set per pair in `.env`); each coin's network stats are one device (`Monero`, `Pearl`).
 
 Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`, `pearl_usdt`, `usdt_eur`, `pearl_network`; `grok` uses `sensor/grok/availability` with no host; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
 
@@ -274,7 +274,9 @@ GROK_AUTH_PATH=
 GROK_USAGE_INTERVAL=240
 
 PEARL_USDT_SLIPPAGE_PCT=0
+PEARL_USDT_PRICE_MODE=avg
 USDT_EUR_SLIPPAGE_PCT=0
+USDT_EUR_PRICE_MODE=avg
 
 LHM_URL=
 ```
@@ -307,6 +309,7 @@ LHM_URL=
 | `GROK_USAGE_INTERVAL` | seconds between polls; required by `grok_usage.py`. Keep it under the endpoint's idle timeout (dropped between 250 and 290 s in testing), or every poll hits a closed connection and the collector exits |
 | **Market pairs** | |
 | `PEARL_USDT_SLIPPAGE_PCT`, `USDT_EUR_SLIPPAGE_PCT` | expected slippage (%) for that conversion step, published as the pair's `slippage_pct` attribute; required by `support/pearl_usdt_price.py` / `support/usdt_eur_price.py` (`0` for none) |
+| `PEARL_USDT_PRICE_MODE`, `USDT_EUR_PRICE_MODE` | how the pair's `Price` combines its sources: `avg` (default), `max` or `min`; anything else exits |
 | **Windows** | |
 | `LHM_URL` | LibreHardwareMonitor web server origin, required by `windows/cpu_package_power.py` |
 
