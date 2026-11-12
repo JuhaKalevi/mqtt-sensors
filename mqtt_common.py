@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
-import os, json, socket, subprocess, threading
+import os, json, socket, subprocess, threading, time
 from contextlib import contextmanager
 from pathlib import Path
 import paho.mqtt.client as mqtt
@@ -9,6 +9,8 @@ import paho.mqtt.client as mqtt
 # After a purge, HA entities recover within this interval without a restart.
 AVAILABILITY_HEARTBEAT_SEC = 60
 DISCOVERY_SETTLE_SEC = 2
+SWEEP_SUBACK_TIMEOUT_SEC = 10
+SWEEP_MODES = ("off", "dry", "apply")
 
 
 def load_dotenv(path=".env"):
@@ -37,6 +39,7 @@ def get_mqtt_settings():
         "user": os.getenv("MQTT_USER") or None,
         "password": os.getenv("MQTT_PASS") or None,
         "prefix": os.getenv("MQTT_PREFIX", "homeassistant"),
+        "sweep": os.getenv("MQTT_SWEEP") or "dry",
     }
 
 def make_device(hostname):
@@ -201,6 +204,13 @@ def _payload_bytes(payload):
         return payload.encode()
     return str(payload).encode()
 
+def _retain(args, kwargs):
+    return kwargs.get("retain", args[1] if len(args) > 1 else False)
+
+def clear_retained(client, topics):
+    for topic in topics:
+        client.publish(topic, b"", qos=1, retain=True).wait_for_publish()  # retained: zero-length retained payload clears the stored message
+
 
 def _start_availability_heartbeat(client, will_topic, will_payload, interval, replay_states=False):
     """Republish non-retained 'online' on will_topic every interval seconds.
@@ -230,7 +240,7 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval, re
                 return orig_publish(topic, payload, *args, **kwargs)
         if topic == will_topic and _payload_bytes(payload) == b"online":
             settle.set()
-        elif replay_states and not topic.endswith("/config") and not kwargs.get("retain", args[1] if len(args) > 1 else False):
+        elif replay_states and not topic.endswith("/config") and not _retain(args, kwargs):
             last[topic] = payload
         return orig_publish(topic, payload, *args, **kwargs)
 
@@ -262,7 +272,70 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval, re
     threading.Thread(target=beat, name="mqtt-avail-heartbeat", daemon=True).start()
 
 
-def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False):
+def _add_init_sweep(client, settings, owned):
+    """Retained-topic sweep for a collector with a defined init phase.
+
+    owned: object-id prefixes this collector alone owns. A topic is in scope
+    when it is <prefix>/<component>/<object>/<leaf> and <object> starts with
+    one of them. Every topic the collector publishes is recorded.
+
+    init_done(): the collector calls it once it has published everything it
+    expects for this run; only the first call does anything. It subscribes to
+    <prefix>/+/+/+, waits for the SUBACK, then DISCOVERY_SETTLE_SEC for the
+    broker to deliver retained messages, and unsubscribes. In-scope retained
+    topics not published this run are stale: MQTT_SWEEP=dry prints them,
+    apply clears them with clear_retained, off skips the sweep. No SUBACK
+    (not connected) skips the sweep.
+    """
+    mode = settings["sweep"]
+    if mode not in SWEEP_MODES:
+        raise SystemExit(f"MQTT_SWEEP must be one of {', '.join(SWEEP_MODES)}, got {mode!r}")
+    prefix = settings["prefix"]
+    scope = f"{prefix}/+/+/+"
+    owned = tuple(owned)
+    published = set()
+    retained = set()
+    done = threading.Event()
+    orig_publish = client.publish
+
+    def publish(topic, *args, **kwargs):
+        published.add(topic)
+        return orig_publish(topic, *args, **kwargs)
+
+    def on_retained(client, userdata, msg):
+        if msg.retain and msg.payload and msg.topic.split("/")[-2].startswith(owned):
+            retained.add(msg.topic)
+
+    def init_done():
+        if done.is_set():
+            return
+        done.set()
+        if mode == "off":
+            return
+        subacked = threading.Event()
+        client.on_subscribe = lambda *a: subacked.set()
+        client.message_callback_add(scope, on_retained)
+        client.subscribe(scope)
+        if subacked.wait(SWEEP_SUBACK_TIMEOUT_SEC):
+            time.sleep(DISCOVERY_SETTLE_SEC)
+        client.unsubscribe(scope)
+        client.message_callback_remove(scope)
+        client.on_subscribe = None
+        if not subacked.is_set():
+            print("sweep: no SUBACK, skipped", flush=True)
+            return
+        stale = sorted(retained - published)
+        for topic in stale:
+            print(f"sweep {mode}: {topic}", flush=True)
+        if mode == "apply":
+            clear_retained(client, stale)
+        print(f"sweep {mode}: {len(stale)} stale retained topic(s)", flush=True)
+
+    client.publish = publish
+    client.init_done = init_done
+
+
+def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False, owned=None):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
     if settings["user"]:
@@ -271,4 +344,6 @@ def create_client(client_id, settings, will_topic=None, will_payload="offline", 
         client.will_set(will_topic, will_payload, qos=1)
         interval = settings.get("availability_heartbeat_sec", AVAILABILITY_HEARTBEAT_SEC)
         _start_availability_heartbeat(client, will_topic, will_payload, interval, replay_states)
+    if owned:
+        _add_init_sweep(client, settings, owned)
     return client

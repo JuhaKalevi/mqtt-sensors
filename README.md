@@ -238,6 +238,10 @@ python3 mqtt_purge_retained.py
 python3 mqtt_purge_retained.py --delete
 ```
 
+Collectors with a defined init phase also sweep their own stale retained topics. So far that is the `support/` collectors: `xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price` and `usdt_eur_price`. After the first full publish cycle each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id starts with one of its own prefixes (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`). Any of those topics it did not publish this run is stale, for example the old retained `xmr_network_hashrate` state. `MQTT_SWEEP` decides what happens: `dry` (default) prints each stale topic and a count to the journal, `apply` clears them, `off` skips the sweep. It runs once per start. Clearing a retained state does not remove the entity from HA (discovery is not retained); delete an orphaned entity in HA by hand.
+
+Deploy: `git pull`, `systemctl restart xmr_network xmr_eur_price pearl_network pearl_usdt_price usdt_eur_price`, check `journalctl -u <service>` for the `sweep dry:` lines, then set `MQTT_SWEEP=apply` in `.env` and restart them again if the list looks right.
+
 ## Configuration
 
 `.env` in the working directory (or the environment). Empty means unset.
@@ -248,6 +252,7 @@ MQTT_PORT=1883
 MQTT_USER=
 MQTT_PASS=
 MQTT_PREFIX=homeassistant
+MQTT_SWEEP=dry
 
 XMRIG_HOST=127.0.0.1
 XMRIG_PORT=44444
@@ -287,6 +292,7 @@ LHM_URL=
 | `MQTT_HOST`, `MQTT_PORT` | broker (default `localhost:1883`) |
 | `MQTT_USER`, `MQTT_PASS` | broker credentials, optional |
 | `MQTT_PREFIX` | discovery prefix (default `homeassistant`) |
+| `MQTT_SWEEP` | stale retained-topic sweep after init: `dry` (default, print only), `apply` (clear), `off` |
 | **XMRig** | |
 | `XMRIG_HOST`, `XMRIG_PORT` | XMRig HTTP API (default `127.0.0.1:44444`) |
 | `XMRIG_TOKEN` | XMRig HTTP bearer token, optional |

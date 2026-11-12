@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-off: list retained MQTT messages and optionally clear them with empty retained payloads."""
 import argparse, time
-from mqtt_common import get_hostname, get_mqtt_settings, create_client
+from mqtt_common import get_hostname, get_mqtt_settings, create_client, clear_retained
 
 parser = argparse.ArgumentParser(description="List retained MQTT topics (dry run) and clear them with --delete.")
 parser.add_argument("--hostname", default=get_hostname(), help="only topics containing this name (default: this machine)")
@@ -35,8 +35,7 @@ for topic in sorted(retained):
 print(f"{len(retained)} retained topic(s) {'for ' + args.hostname if not args.all else 'on the broker'}")
 
 if args.delete:
-    for topic in sorted(retained):
-        client.publish(topic, b"", qos=1, retain=True).wait_for_publish()  # retained: clear stored message
+    clear_retained(client, sorted(retained))
     print(f"cleared {len(retained)} topic(s)")
 elif retained:
     print("dry run; add --delete to clear them")
