@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monero network difficulty, hashrate, block reward → MQTT + HA (xmrchain.net)."""
+"""Monero network difficulty, block times, block reward → MQTT + HA (xmrchain.net)."""
 import json, sys, time, http.client
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -12,18 +12,26 @@ CLIENT_ID = f"xmr-network-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 ATOMIC = 1_000_000_000_000
+CURRENT_WINDOW_BLOCKS = 30
 
 OBJ_DIFF = "xmr_difficulty"
-OBJ_HR = "xmr_network_hashrate"
+OBJ_NOM = "xmr_nominal_block_time"
+OBJ_PER = "xmr_difficulty_period_block_time"
+OBJ_CUR = "xmr_current_block_time"
 OBJ_REW = "xmr_block_reward"
 OBJ_RATE = "xmr_per_hs_day"
 AVAIL_T = f"{PREFIX}/sensor/xmr_network/availability"
 STATE_DIFF = f"{PREFIX}/sensor/{OBJ_DIFF}/state"
-STATE_HR = f"{PREFIX}/sensor/{OBJ_HR}/state"
+STATE_NOM = f"{PREFIX}/sensor/{OBJ_NOM}/state"
+STATE_PER = f"{PREFIX}/sensor/{OBJ_PER}/state"
+STATE_CUR = f"{PREFIX}/sensor/{OBJ_CUR}/state"
 STATE_REW = f"{PREFIX}/sensor/{OBJ_REW}/state"
 STATE_RATE = f"{PREFIX}/sensor/{OBJ_RATE}/state"
+ATTRS_CUR = f"{PREFIX}/sensor/{OBJ_CUR}/attributes"
 CONFIG_DIFF = f"{PREFIX}/sensor/{OBJ_DIFF}/config"
-CONFIG_HR = f"{PREFIX}/sensor/{OBJ_HR}/config"
+CONFIG_NOM = f"{PREFIX}/sensor/{OBJ_NOM}/config"
+CONFIG_PER = f"{PREFIX}/sensor/{OBJ_PER}/config"
+CONFIG_CUR = f"{PREFIX}/sensor/{OBJ_CUR}/config"
 CONFIG_REW = f"{PREFIX}/sensor/{OBJ_REW}/config"
 CONFIG_RATE = f"{PREFIX}/sensor/{OBJ_RATE}/config"
 
@@ -43,8 +51,13 @@ def sensor(name, state, obj, unit=None):
     return d
 
 DISCOVERY_DIFF = sensor("Monero Difficulty", STATE_DIFF, OBJ_DIFF)
-DISCOVERY_HR = sensor("Monero Network Hashrate", STATE_HR, OBJ_HR, "H/s")
-DISCOVERY_HR["suggested_display_precision"] = 0
+DISCOVERY_NOM = sensor("Monero Nominal Block Time", STATE_NOM, OBJ_NOM, "s")
+DISCOVERY_NOM["suggested_display_precision"] = 0
+DISCOVERY_PER = sensor("Monero Difficulty Period Block Time", STATE_PER, OBJ_PER, "s")
+DISCOVERY_PER["suggested_display_precision"] = 0
+DISCOVERY_CUR = sensor("Monero Current Block Time", STATE_CUR, OBJ_CUR, "s")
+DISCOVERY_CUR["suggested_display_precision"] = 1
+DISCOVERY_CUR["json_attributes_topic"] = ATTRS_CUR
 DISCOVERY_REW = sensor("Monero Block Reward", STATE_REW, OBJ_REW, "XMR")
 DISCOVERY_REW["suggested_display_precision"] = 6
 DISCOVERY_RATE = sensor("Monero XMR per H/s per Day", STATE_RATE, OBJ_RATE, "XMR/H/s/d")
@@ -60,33 +73,44 @@ def get(path):
 def metrics():
     ni = get("/api/networkinfo")["data"]
     difficulty = int(ni["difficulty"])
-    net_hr = float(ni["hash_rate"])
+    nominal = float(ni["target"])
+    period = nominal
     height = int(ni["height"])
-    block = get(f"/api/block/{height - 1}")["data"]
+    tip = height - 1
+    block = get(f"/api/block/{tip}")["data"]
+    earlier = get(f"/api/block/{tip - CURRENT_WINDOW_BLOCKS}")["data"]
     reward_atomic = next(tx["xmr_outputs"] for tx in block["txs"] if tx["coinbase"])
     reward = reward_atomic / ATOMIC
     rate = reward * 86400.0 / difficulty
-    return difficulty, net_hr, reward, rate
+    window_blocks = CURRENT_WINDOW_BLOCKS
+    window_secs = int(block["timestamp"]) - int(earlier["timestamp"])
+    current = window_secs / window_blocks
+    return difficulty, reward, rate, nominal, period, current, window_secs, window_blocks
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(f"{PREFIX}/status")
         client.publish(CONFIG_DIFF, json.dumps(DISCOVERY_DIFF))
-        client.publish(CONFIG_HR, json.dumps(DISCOVERY_HR))
+        client.publish(CONFIG_NOM, json.dumps(DISCOVERY_NOM))
+        client.publish(CONFIG_PER, json.dumps(DISCOVERY_PER))
+        client.publish(CONFIG_CUR, json.dumps(DISCOVERY_CUR))
         client.publish(CONFIG_REW, json.dumps(DISCOVERY_REW))
         client.publish(CONFIG_RATE, json.dumps(DISCOVERY_RATE))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
 try:
     while True:
-        difficulty, net_hr, reward, rate = metrics()
+        difficulty, reward, rate, nominal, period, current, window_secs, window_blocks = metrics()
         client.publish(STATE_DIFF, str(difficulty), retain=True)  # retained: slow interval
-        client.publish(STATE_HR, format(net_hr, ".15g"), retain=True)  # retained: slow interval
+        client.publish(STATE_NOM, format(nominal, ".15g"))
+        client.publish(STATE_PER, format(period, ".15g"))
+        client.publish(STATE_CUR, format(current, ".15g"))
+        client.publish(ATTRS_CUR, json.dumps({"window_secs": window_secs, "window_blocks": window_blocks}))
         client.publish(STATE_REW, format(reward, ".15g"), retain=True)  # retained: slow interval
         client.publish(STATE_RATE, format(rate, ".15g"), retain=True)  # retained: read at startup by xmrig_status
         time.sleep(60.0)
