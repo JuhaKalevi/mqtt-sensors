@@ -60,7 +60,8 @@ def get(path):
 def metrics():
     st = get("/api/explorer/stats")
     difficulty = float(st["difficulty"])
-    net_hr = float(st["networkHashPs"])
+    target_secs = float(st["targetBlockSecs"])
+    net_hr = difficulty * WORK_PER_DIFFICULTY / target_secs
     reward = float(st["blockRewardPearl"])
     rate = reward * 86400.0 / (difficulty * WORK_PER_DIFFICULTY)
     return difficulty, net_hr, reward, rate
