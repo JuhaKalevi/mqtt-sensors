@@ -47,7 +47,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG, json.dumps(DISCOVERY))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=("xmr_eur",))
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=("xmr_eur",), entities=(f"sensor/{OBJ}",))
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()

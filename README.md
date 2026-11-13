@@ -237,7 +237,11 @@ Retained messages from older versions stay on the broker until cleared. `mqtt_pu
 python3 mqtt_purge_retained.py
 python3 mqtt_purge_retained.py --delete
 python3 mqtt_purge_retained.py --entity sensor/pearl_network_hashrate --delete
+python3 mqtt_purge_retained.py --script support/pearl_network.py
+python3 mqtt_purge_retained.py --script support/pearl_network.py --delete
 ```
+
+`--script PATH` covers every entity and retained topic of a sweep-enabled collector by running that script with `--list`, or `--purge` with `--delete` (see below).
 
 Collectors with a defined init phase also sweep their own stale retained topics and remove their retired entities. So far that is the `support/` collectors (`xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price`, `usdt_eur_price`) and the Chia collectors (`chia_farm_size`, `chia_harvester_processing_time`, `chia_recompute_server_processing_time`). Once it has published everything it expects, each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id is one of its own ids, or one of them followed by `_…` (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`; each Chia collector owns exactly its availability id and entity ids, all ending in `_<host>`, so another host's ids never match). Any of those topics it did not publish this run is stale, for example the old retained `xmr_network_hashrate` state.
 
@@ -249,6 +253,18 @@ When a collector's init is done:
 - `support/` collectors and `chia_farm_size`: after the first poll (all their states published).
 - `chia_harvester_processing_time`: after the first eligible-plots line in `debug.log` (time and plot count). It follows the log from the end, so until the harvester logs a signage point (about every 10 s while farming) it has published only discovery and availability, and it does not sweep.
 - `chia_recompute_server_processing_time`: after the first `took … ms` line in the `chia_recompute_server` journal. If the recompute server is idle, it does not sweep until work arrives.
+
+Every sweep-enabled collector also takes `--list` and `--purge`, and then exits without starting its loop:
+- `--list` (read-only) prints its current entity config topics, its retired entity config topics, and every retained topic in its scope on the broker (marked `(retained)`).
+- `--purge` force-deletes all of them: an empty payload on each `config` (removes the entity and its history from HA, retained or not) and a cleared retained message on every retained topic in scope. It ignores `MQTT_SWEEP`. Stop the collector first, or its next publish recreates the entities.
+
+```sh
+systemctl stop pearl_network
+python3 support/pearl_network.py --list
+python3 support/pearl_network.py --purge
+```
+
+Run them from the repo directory so `.env` is found (`mqtt_purge_retained.py --script` does that for you). The `support/` scripts open their HTTPS connection to the price or explorer API before handling the flag, but do not request anything.
 
 Deploy: `git pull`, `systemctl restart xmr_network xmr_eur_price pearl_network pearl_usdt_price usdt_eur_price` and, on Chia hosts, `systemctl restart chia_farm_size chia_harvester_processing_time chia_recompute_server_processing_time`. Check `journalctl -u <service>` for the `sweep dry:` lines, then set `MQTT_SWEEP=apply` in `.env` and restart them again if the list looks right. `MQTT_SWEEP` is per host `.env`, so each host is switched on separately.
 

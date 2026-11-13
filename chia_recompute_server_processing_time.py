@@ -34,7 +34,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_TIME, json.dumps(DISCOVERY_TIME))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_recompute_server_{HOSTNAME}", OBJ_TIME), retired=(
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_recompute_server_{HOSTNAME}", OBJ_TIME), entities=(f"sensor/{OBJ_TIME}",), retired=(
     f"sensor/chia_recompute_server_{HOSTNAME}",
     f"sensor/chia_recompute_time_{HOSTNAME}",
     f"sensor/chia_recompute_fail_{HOSTNAME}",

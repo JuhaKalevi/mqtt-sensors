@@ -60,7 +60,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.publish(f"{PREFIX}/sensor/{obj}/config", json.dumps(sensor(name, obj)))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=("usdt_eur",))
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=("usdt_eur",), entities=(f"sensor/{OBJ}",) + tuple(f"sensor/usdt_eur_{src}_price" for src in SOURCES))
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
-import os, json, socket, subprocess, threading, time
+import os, json, socket, subprocess, sys, threading, time
 from contextlib import contextmanager
 from pathlib import Path
 import paho.mqtt.client as mqtt
@@ -11,6 +11,7 @@ AVAILABILITY_HEARTBEAT_SEC = 60
 DISCOVERY_SETTLE_SEC = 2
 SWEEP_SUBACK_TIMEOUT_SEC = 10
 SWEEP_MODES = ("off", "dry", "apply")
+CLI_FLAGS = ("--list", "--purge")
 
 
 def load_dotenv(path=".env"):
@@ -275,6 +276,80 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval, re
 def owns(owned, obj):
     return any(obj == p or obj.startswith(p + "_") for p in owned)
 
+def _scan_retained(client, prefix, match):
+    """Retained topics <prefix>/<component>/<object>/<leaf> for which match(component, object) is true.
+
+    Subscribes to <prefix>/+/+/+, waits for the SUBACK, then DISCOVERY_SETTLE_SEC
+    for the broker to deliver retained messages, and unsubscribes. Returns None
+    when there is no SUBACK (not connected).
+    """
+    scope = f"{prefix}/+/+/+"
+    found = set()
+    subacked = threading.Event()
+
+    def on_retained(client, userdata, msg):
+        component, obj = msg.topic.split("/")[-3:-1]
+        if msg.retain and msg.payload and match(component, obj):
+            found.add(msg.topic)
+
+    client.on_subscribe = lambda *a: subacked.set()
+    client.message_callback_add(scope, on_retained)
+    client.subscribe(scope)
+    if subacked.wait(SWEEP_SUBACK_TIMEOUT_SEC):
+        time.sleep(DISCOVERY_SETTLE_SEC)
+    client.unsubscribe(scope)
+    client.message_callback_remove(scope)
+    client.on_subscribe = None
+    return set(found) if subacked.is_set() else None
+
+def force_purge(client_id, settings, entities=(), owned=(), retired=(), apply=False):
+    """List (apply=False) or force-delete (apply=True) a set of entities and their retained topics.
+
+    entities and retired are "<component>/<object>"; owned are object ids or
+    id prefixes as for the sweep. The topics are every entity and retired
+    config topic plus every retained topic under an owned, entity or retired
+    object. apply clears them all with clear_retained (an empty config
+    removes the HA entity and its history, retained or not). Independent of
+    MQTT_SWEEP. Uses its own short-lived connection; exits when it cannot
+    connect.
+    """
+    prefix = settings["prefix"]
+    named = set(entities) | set(retired)
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    if settings["user"]:
+        client.username_pw_set(settings["user"], settings["password"])
+    connected = threading.Event()
+    client.on_connect = lambda c, u, f, rc, p=None: rc == 0 and connected.set()
+    client.connect(settings["host"], settings["port"], keepalive=60)
+    client.loop_start()
+    try:
+        if not connected.wait(SWEEP_SUBACK_TIMEOUT_SEC):
+            raise SystemExit("purge: not connected")
+        retained = _scan_retained(client, prefix, lambda component, obj: owns(owned, obj) or f"{component}/{obj}" in named)
+        if retained is None:
+            raise SystemExit("purge: no SUBACK")
+        topics = sorted({f"{prefix}/{e}/config" for e in named} | retained)
+        for topic in topics:
+            print(f"{'purge' if apply else 'list'}: {topic}{' (retained)' if topic in retained else ''}", flush=True)
+        if apply:
+            clear_retained(client, topics)
+        print(f"{'purged' if apply else 'listed'} {len(topics)} topic(s), {len(retained)} retained", flush=True)
+        return topics
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+def _cli(client_id, settings, entities, owned, retired):
+    args = sys.argv[1:]
+    if not args:
+        return
+    if len(args) != 1 or args[0] not in CLI_FLAGS:
+        raise SystemExit(f"usage: {sys.argv[0]} [--list | --purge]")
+    if args[0] == "--purge":
+        print("purge: stop this collector first, or its next publish recreates the entities", flush=True)
+    force_purge(f"{client_id}-purge", settings, entities, owned, retired, apply=args[0] == "--purge")
+    raise SystemExit(0)
+
 def _add_init_sweep(client, settings, owned, retired):
     """Retained-topic sweep and retired-entity removal for a collector with a defined init phase.
 
@@ -285,24 +360,21 @@ def _add_init_sweep(client, settings, owned, retired):
     Every topic the collector publishes is recorded.
 
     init_done(): the collector calls it once it has published everything it
-    expects for this run; only the first call does anything. It subscribes to
-    <prefix>/+/+/+, waits for the SUBACK, then DISCOVERY_SETTLE_SEC for the
-    broker to deliver retained messages, and unsubscribes. Retained topics in
-    scope or under a retired entity that were not published this run are
-    stale; each retired entity's config topic not published this run is
-    removed even when nothing is retained there (HA keeps non-retained
-    discovery in memory). MQTT_SWEEP=dry prints them, apply clears them with
-    clear_retained, off skips. No SUBACK (not connected) skips the sweep.
+    expects for this run; only the first call does anything. It collects the
+    retained topics with _scan_retained. Retained topics in scope or under a
+    retired entity that were not published this run are stale; each retired
+    entity's config topic not published this run is removed even when nothing
+    is retained there (HA keeps non-retained discovery in memory).
+    MQTT_SWEEP=dry prints them, apply clears them with clear_retained, off
+    skips. No SUBACK (not connected) skips the sweep.
     """
     mode = settings["sweep"]
     if mode not in SWEEP_MODES:
         raise SystemExit(f"MQTT_SWEEP must be one of {', '.join(SWEEP_MODES)}, got {mode!r}")
     prefix = settings["prefix"]
-    scope = f"{prefix}/+/+/+"
     owned = tuple(owned)
     retired = tuple(retired)
     published = set()
-    retained = set()
     done = threading.Event()
     orig_publish = client.publish
 
@@ -310,27 +382,14 @@ def _add_init_sweep(client, settings, owned, retired):
         published.add(topic)
         return orig_publish(topic, *args, **kwargs)
 
-    def on_retained(client, userdata, msg):
-        component, obj = msg.topic.split("/")[-3:-1]
-        if msg.retain and msg.payload and (owns(owned, obj) or f"{component}/{obj}" in retired):
-            retained.add(msg.topic)
-
     def init_done():
         if done.is_set():
             return
         done.set()
         if mode == "off":
             return
-        subacked = threading.Event()
-        client.on_subscribe = lambda *a: subacked.set()
-        client.message_callback_add(scope, on_retained)
-        client.subscribe(scope)
-        if subacked.wait(SWEEP_SUBACK_TIMEOUT_SEC):
-            time.sleep(DISCOVERY_SETTLE_SEC)
-        client.unsubscribe(scope)
-        client.message_callback_remove(scope)
-        client.on_subscribe = None
-        if not subacked.is_set():
+        retained = _scan_retained(client, prefix, lambda component, obj: owns(owned, obj) or f"{component}/{obj}" in retired)
+        if retained is None:
             print("sweep: no SUBACK, skipped", flush=True)
             return
         stale = sorted(retained - published)
@@ -347,7 +406,9 @@ def _add_init_sweep(client, settings, owned, retired):
     client.init_done = init_done
 
 
-def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False, owned=(), retired=()):
+def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False, owned=(), entities=(), retired=()):
+    if owned or retired:
+        _cli(client_id, settings, entities, owned, retired)
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
     if settings["user"]:
