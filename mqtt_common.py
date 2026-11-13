@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal shared MQTT + Home Assistant discovery helpers."""
-import os, json, socket, subprocess, sys, threading, time
+import argparse, os, json, socket, subprocess, sys, threading, time
 from contextlib import contextmanager
 from pathlib import Path
 import paho.mqtt.client as mqtt
@@ -11,7 +11,6 @@ AVAILABILITY_HEARTBEAT_SEC = 60
 DISCOVERY_SETTLE_SEC = 2
 SWEEP_SUBACK_TIMEOUT_SEC = 10
 SWEEP_MODES = ("off", "dry", "apply")
-CLI_FLAGS = ("--list", "--purge")
 
 
 def load_dotenv(path=".env"):
@@ -302,19 +301,23 @@ def _scan_retained(client, prefix, match):
     client.on_subscribe = None
     return set(found) if subacked.is_set() else None
 
-def force_purge(client_id, settings, entities=(), owned=(), retired=(), apply=False):
+def force_purge(client_id, settings, entities=(), owned=(), retired=(), apply=False, match=None, keep=()):
     """List (apply=False) or force-delete (apply=True) a set of entities and their retained topics.
 
     entities and retired are "<component>/<object>"; owned are object ids or
-    id prefixes as for the sweep. The topics are every entity and retired
-    config topic plus every retained topic under an owned, entity or retired
-    object. apply clears them all with clear_retained (an empty config
-    removes the HA entity and its history, retained or not). Independent of
-    MQTT_SWEEP. Uses its own short-lived connection; exits when it cannot
-    connect.
+    id prefixes as for the sweep; match(object) optionally selects more
+    objects, each a whole entity whose config topic is included too. The
+    topics are every entity and retired config topic plus every retained
+    topic under an owned, entity, retired or matched object. Topics of an
+    object in keep are listed as present and never cleared; with keep, the
+    others are listed as stale. apply clears the
+    rest with clear_retained (an empty config removes the HA entity and its
+    history, retained or not). Independent of MQTT_SWEEP. Uses its own
+    short-lived connection; exits when it cannot connect.
     """
     prefix = settings["prefix"]
     named = set(entities) | set(retired)
+    keep = set(keep)
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     if settings["user"]:
         client.username_pw_set(settings["user"], settings["password"])
@@ -325,29 +328,55 @@ def force_purge(client_id, settings, entities=(), owned=(), retired=(), apply=Fa
     try:
         if not connected.wait(SWEEP_SUBACK_TIMEOUT_SEC):
             raise SystemExit("purge: not connected")
-        retained = _scan_retained(client, prefix, lambda component, obj: owns(owned, obj) or f"{component}/{obj}" in named)
+        retained = _scan_retained(client, prefix, lambda component, obj: owns(owned, obj) or f"{component}/{obj}" in named or bool(match and match(obj)))
         if retained is None:
             raise SystemExit("purge: no SUBACK")
-        topics = sorted({f"{prefix}/{e}/config" for e in named} | retained)
+        found = {"/".join(t.split("/")[-3:-1]) for t in retained if match and match(t.split("/")[-2])}
+        topics = sorted({f"{prefix}/{e}/config" for e in named | found} | retained)
+        kept = [t for t in topics if t.split("/")[-2] in keep]
+        targets = [t for t in topics if t not in kept]
         for topic in topics:
-            print(f"{'purge' if apply else 'list'}: {topic}{' (retained)' if topic in retained else ''}", flush=True)
+            marks = (" (retained)" if topic in retained else "") + (" (present, kept)" if topic in kept else " (stale)" if keep else "")
+            print(f"{'purge' if apply and topic not in kept else 'list'}: {topic}{marks}", flush=True)
         if apply:
-            clear_retained(client, topics)
-        print(f"{'purged' if apply else 'listed'} {len(topics)} topic(s), {len(retained)} retained", flush=True)
-        return topics
+            clear_retained(client, targets)
+        print(f"{'purged' if apply else 'listed'} {len(targets)} topic(s), {len(retained)} retained, {len(kept)} kept", flush=True)
+        return targets
     finally:
         client.loop_stop()
         client.disconnect()
 
-def _cli(client_id, settings, entities, owned, retired):
-    args = sys.argv[1:]
-    if not args:
+def handle_cli(client_id, settings, entities=(), owned=(), retired=(), match=None, present=None):
+    """The collector CLI shared by every script that supports it; returns when no flag is given.
+
+    --list (read-only) and --purge (everything) go through force_purge and
+    exit 0. present() -> ({object: label}, [unknown]) enables --purge-stale:
+    the present objects become entities and are kept, everything else
+    matched is purged; any unknown entry refuses it (exit 1). --help prints
+    the usage and exits 0, an unknown flag exits 2. Runs before the
+    collector creates its client or opens a source.
+    """
+    parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]), description="Without a flag, runs the collector. Flags exit without starting it.")
+    flags = parser.add_mutually_exclusive_group()
+    flags.add_argument("--list", action="store_true", help="print every entity and retained topic this script owns or has retired (read-only)")
+    flags.add_argument("--purge", action="store_true", help="remove all of them from HA and the broker; stop the collector first")
+    if present:
+        flags.add_argument("--purge-stale", action="store_true", help="remove only entities of devices that are not present; present ones are kept")
+    args = parser.parse_args()
+    stale = getattr(args, "purge_stale", False)
+    if not (args.list or args.purge or stale):
         return
-    if len(args) != 1 or args[0] not in CLI_FLAGS:
-        raise SystemExit(f"usage: {sys.argv[0]} [--list | --purge]")
-    if args[0] == "--purge":
+    keep, unknown = present() if present else ({}, [])
+    for obj, label in sorted(keep.items()):
+        print(f"present: {obj} ({label})", flush=True)
+    for u in unknown:
+        print(f"unknown: {u}", flush=True)
+    if stale and unknown:
+        raise SystemExit("purge-stale: refused, a present device's object id is unknown without waking it; remove single ghosts with mqtt_purge_retained.py --entity")
+    if not args.list:
         print("purge: stop this collector first, or its next publish recreates the entities", flush=True)
-    force_purge(f"{client_id}-purge", settings, entities, owned, retired, apply=args[0] == "--purge")
+    entities = tuple(entities) + tuple(f"sensor/{o}" for o in keep if not stale)
+    force_purge(f"{client_id}-purge", settings, entities, owned, retired, apply=not args.list, match=match, keep=keep if not args.purge else ())
     raise SystemExit(0)
 
 def _add_init_sweep(client, settings, owned, retired):
@@ -408,7 +437,7 @@ def _add_init_sweep(client, settings, owned, retired):
 
 def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False, owned=(), entities=(), retired=()):
     if owned or retired:
-        _cli(client_id, settings, entities, owned, retired)
+        handle_cli(client_id, settings, entities, owned, retired)
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
     if settings["user"]:

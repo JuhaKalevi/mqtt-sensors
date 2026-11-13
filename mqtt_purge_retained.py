@@ -9,12 +9,13 @@ parser.add_argument("--hostname", default=get_hostname(), help="only topics cont
 parser.add_argument("--all", action="store_true", help="every retained topic on the broker, not just this hostname")
 parser.add_argument("--entity", action="append", default=[], metavar="COMPONENT/OBJECT", help="only this entity (repeatable, e.g. sensor/pearl_network_hashrate): its retained topics plus its config topic, so --delete removes it from HA even when its discovery was not retained")
 parser.add_argument("--script", metavar="PATH", help="every entity and retained topic of a sweep-enabled collector (e.g. support/pearl_network.py): runs it with --list, or --purge with --delete; stop the collector first")
+parser.add_argument("--stale", action="store_true", help="with --script and --delete: run it with --purge-stale instead of --purge (scripts that support it, e.g. hwmon_drive_temperature.py)")
 parser.add_argument("--delete", action="store_true", help="publish zero-length retained payloads to clear the listed topics")
 parser.add_argument("--wait", type=float, default=3.0, help="seconds to collect retained messages")
 args = parser.parse_args()
 
 if args.script:
-    sys.exit(subprocess.run([sys.executable, str(Path(args.script).resolve()), "--purge" if args.delete else "--list"], cwd=Path(__file__).resolve().parent).returncode)
+    sys.exit(subprocess.run([sys.executable, str(Path(args.script).resolve()), ("--purge-stale" if args.stale else "--purge") if args.delete else "--list"], cwd=Path(__file__).resolve().parent).returncode)
 
 settings = get_mqtt_settings()
 

@@ -4,7 +4,7 @@ import ctypes, errno, fcntl, json, os, re, sys, time
 from pathlib import Path
 from mqtt_common import (
     get_hostname, get_mqtt_settings, make_device,
-    make_sensor_discovery, create_client
+    make_sensor_discovery, create_client, handle_cli
 )
 
 HOSTNAME = get_hostname()
@@ -411,6 +411,32 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         for d in list(drives.values()) + [s for s in sat_drives.values() if s["mode"] == "sat"]:
             client.publish(d["config"], json.dumps(d["discovery"]))
         client.publish(AVAIL_T, "online")
+
+def present_drives():
+    keep, unknown = {}, []
+    covered = set()
+    for hw in sorted(ROOT.iterdir()):
+        dev = (hw / "device").resolve()
+        ids = identity(dev) if read_opt(hw / "name") in ("drivetemp", "nvme") else None
+        if ids:
+            covered.add(dev)
+            keep[entry(ids)["obj"]] = f"{hw.name} {block_name(dev, dev.name)}"
+    for b in sorted(BLOCK.glob("sd*")):
+        dev = (b / "device").resolve()
+        if dev in covered:
+            continue
+        ids = identity(dev)
+        if ids:
+            keep[entry(ids)["obj"]] = b.name
+        if candidate(b) and len(read_bin(dev / "vpd_pg89")) < 572:
+            unknown.append(f"{b.name}: no vpd_pg89, its object id comes from IDENTIFY")
+    return keep, unknown
+
+AVAIL_OBJ = f"hwmon_drive_temperature_{HOSTNAME}"
+handle_cli(
+    CLIENT_ID, settings, match=lambda obj: obj != AVAIL_OBJ and obj.startswith("hwmon_drive_temperature_") and obj.endswith(f"_{HOSTNAME}"),
+    present=present_drives,
+)
 
 hwmons = [hw for hw in ROOT.iterdir() if read_opt(hw / "name") in ("drivetemp", "nvme")]
 disks = [b for b in BLOCK.glob("sd*") if candidate(b)]

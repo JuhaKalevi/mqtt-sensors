@@ -39,7 +39,6 @@ DISCOVERY = sensor("Price", OBJ)
 DISCOVERY["json_attributes_topic"] = ATTRS
 
 gate_conn = http.client.HTTPSConnection("api.gateio.ws", timeout=15)
-gate_conn.connect()
 
 def gate():
     gate_conn.request("GET", "/api/v4/spot/tickers?currency_pair=PEARL_USDT")
@@ -48,7 +47,6 @@ def gate():
     return float(data[0]["last"])
 
 near_intents_conn = http.client.HTTPSConnection("1click.chaindefuser.com", timeout=15)
-near_intents_conn.connect()
 
 def near_intents():
     near_intents_conn.request("GET", "/v0/tokens", headers={"User-Agent": "mqtt-sensors"})
@@ -68,6 +66,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(AVAIL_T, "online")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=("pearl_usdt",), entities=(f"sensor/{OBJ}",) + tuple(f"sensor/pearl_usdt_{src}_price" for src in SOURCES), retired=("sensor/pearl_eur_price",))
+gate_conn.connect()
+near_intents_conn.connect()
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
