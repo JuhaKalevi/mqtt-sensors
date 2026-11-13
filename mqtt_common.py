@@ -272,20 +272,27 @@ def _start_availability_heartbeat(client, will_topic, will_payload, interval, re
     threading.Thread(target=beat, name="mqtt-avail-heartbeat", daemon=True).start()
 
 
-def _add_init_sweep(client, settings, owned):
-    """Retained-topic sweep for a collector with a defined init phase.
+def owns(owned, obj):
+    return any(obj == p or obj.startswith(p + "_") for p in owned)
 
-    owned: object-id prefixes this collector alone owns. A topic is in scope
-    when it is <prefix>/<component>/<object>/<leaf> and <object> starts with
-    one of them. Every topic the collector publishes is recorded.
+def _add_init_sweep(client, settings, owned, retired):
+    """Retained-topic sweep and retired-entity removal for a collector with a defined init phase.
+
+    owned: object ids or id prefixes this collector alone owns. A topic is in
+    scope when it is <prefix>/<component>/<object>/<leaf> and <object> equals
+    one of them or starts with one of them followed by "_".
+    retired: "<component>/<object>" entities this collector used to publish.
+    Every topic the collector publishes is recorded.
 
     init_done(): the collector calls it once it has published everything it
     expects for this run; only the first call does anything. It subscribes to
     <prefix>/+/+/+, waits for the SUBACK, then DISCOVERY_SETTLE_SEC for the
-    broker to deliver retained messages, and unsubscribes. In-scope retained
-    topics not published this run are stale: MQTT_SWEEP=dry prints them,
-    apply clears them with clear_retained, off skips the sweep. No SUBACK
-    (not connected) skips the sweep.
+    broker to deliver retained messages, and unsubscribes. Retained topics in
+    scope or under a retired entity that were not published this run are
+    stale; each retired entity's config topic not published this run is
+    removed even when nothing is retained there (HA keeps non-retained
+    discovery in memory). MQTT_SWEEP=dry prints them, apply clears them with
+    clear_retained, off skips. No SUBACK (not connected) skips the sweep.
     """
     mode = settings["sweep"]
     if mode not in SWEEP_MODES:
@@ -293,6 +300,7 @@ def _add_init_sweep(client, settings, owned):
     prefix = settings["prefix"]
     scope = f"{prefix}/+/+/+"
     owned = tuple(owned)
+    retired = tuple(retired)
     published = set()
     retained = set()
     done = threading.Event()
@@ -303,7 +311,8 @@ def _add_init_sweep(client, settings, owned):
         return orig_publish(topic, *args, **kwargs)
 
     def on_retained(client, userdata, msg):
-        if msg.retain and msg.payload and msg.topic.split("/")[-2].startswith(owned):
+        component, obj = msg.topic.split("/")[-3:-1]
+        if msg.retain and msg.payload and (owns(owned, obj) or f"{component}/{obj}" in retired):
             retained.add(msg.topic)
 
     def init_done():
@@ -325,17 +334,20 @@ def _add_init_sweep(client, settings, owned):
             print("sweep: no SUBACK, skipped", flush=True)
             return
         stale = sorted(retained - published)
+        removed = sorted({f"{prefix}/{r}/config" for r in retired} - published - retained)
         for topic in stale:
             print(f"sweep {mode}: {topic}", flush=True)
+        for topic in removed:
+            print(f"sweep {mode}: remove {topic}", flush=True)
         if mode == "apply":
-            clear_retained(client, stale)
-        print(f"sweep {mode}: {len(stale)} stale retained topic(s)", flush=True)
+            clear_retained(client, stale + removed)
+        print(f"sweep {mode}: {len(stale)} stale retained topic(s), {len(removed)} retired entity config(s)", flush=True)
 
     client.publish = publish
     client.init_done = init_done
 
 
-def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False, owned=None):
+def create_client(client_id, settings, will_topic=None, will_payload="offline", replay_states=False, owned=(), retired=()):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.message_callback_add(f"{settings['prefix']}/status", on_ha_status)
     if settings["user"]:
@@ -344,6 +356,6 @@ def create_client(client_id, settings, will_topic=None, will_payload="offline", 
         client.will_set(will_topic, will_payload, qos=1)
         interval = settings.get("availability_heartbeat_sec", AVAILABILITY_HEARTBEAT_SEC)
         _start_availability_heartbeat(client, will_topic, will_payload, interval, replay_states)
-    if owned:
-        _add_init_sweep(client, settings, owned)
+    if owned or retired:
+        _add_init_sweep(client, settings, owned, retired)
     return client

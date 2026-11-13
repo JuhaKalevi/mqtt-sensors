@@ -92,7 +92,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_RATE, json.dumps(DISCOVERY_RATE))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=(DEVICE_ID, OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE))
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=(DEVICE_ID, OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE), retired=("sensor/pearl_network_hashrate",))
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()

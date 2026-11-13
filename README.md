@@ -231,16 +231,26 @@ Publish is not retained unless there is a clear, commented reason. Discovery con
 
 The exceptions: `kmsg_reset_reason.py` retains config, attributes and state because it is run-once; `xmr_eur_price` and `xmr_per_hs_day` retain state so `xmrig_status` can read them at startup (same 60 s interval for the other retained `xmr_network` states: difficulty and block reward); the Monero block-time entities are not retained; `pearl_usdt_price`, `usdt_eur_price` and `pearl_network` are not retained (nothing reads them at startup; HA shows a value within 60 s); `grok_usage` and `hwmon_drive_temperature` retain state (and grok attributes) because they publish at 60 s or slower. Package power is published every second and is not retained. `ELECTRICITY_EUR_PER_KWH_TOPIC`, when used, is an external topic this repo does not publish.
 
-Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host.
+Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host. `--entity COMPONENT/OBJECT` (repeatable) limits the list to that one entity: its retained topics plus its `config` topic, so `--delete` also removes an entity whose discovery was never retained (Home Assistant keeps non-retained discovery in memory until it restarts, and will not let you delete it in the UI meanwhile). Removing an entity this way also drops its history.
 
 ```sh
 python3 mqtt_purge_retained.py
 python3 mqtt_purge_retained.py --delete
+python3 mqtt_purge_retained.py --entity sensor/pearl_network_hashrate --delete
 ```
 
-Collectors with a defined init phase also sweep their own stale retained topics. So far that is the `support/` collectors: `xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price` and `usdt_eur_price`. After the first full publish cycle each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id starts with one of its own prefixes (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`). Any of those topics it did not publish this run is stale, for example the old retained `xmr_network_hashrate` state. `MQTT_SWEEP` decides what happens: `dry` (default) prints each stale topic and a count to the journal, `apply` clears them, `off` skips the sweep. It runs once per start. Clearing a retained state does not remove the entity from HA (discovery is not retained); delete an orphaned entity in HA by hand.
+Collectors with a defined init phase also sweep their own stale retained topics and remove their retired entities. So far that is the `support/` collectors (`xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price`, `usdt_eur_price`) and the Chia collectors (`chia_farm_size`, `chia_harvester_processing_time`, `chia_recompute_server_processing_time`). Once it has published everything it expects, each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id is one of its own ids, or one of them followed by `_…` (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`; each Chia collector owns exactly its availability id and entity ids, all ending in `_<host>`, so another host's ids never match). Any of those topics it did not publish this run is stale, for example the old retained `xmr_network_hashrate` state.
 
-Deploy: `git pull`, `systemctl restart xmr_network xmr_eur_price pearl_network pearl_usdt_price usdt_eur_price`, check `journalctl -u <service>` for the `sweep dry:` lines, then set `MQTT_SWEEP=apply` in `.env` and restart them again if the list looks right.
+A collector also lists its retired entities (ones it no longer publishes): `xmr_network` retires `xmr_network_hashrate`, `pearl_network` `pearl_network_hashrate`, `pearl_usdt_price` the old CoinGecko `pearl_eur_price`, and `chia_recompute_server_processing_time` the pre-rename `chia_recompute_*_<host>` ids (`chia_recompute_server`, `chia_recompute_time`, `chia_recompute_fail`, `chia_recompute_server_time`, `chia_recompute_server_fail`). For each, it clears any retained topic under it and publishes an empty `config`, which removes the entity from HA right away even if its discovery was never retained, and drops its history. A rename should keep the history: rename the entity in HA first, then retire the old id.
+
+`MQTT_SWEEP` decides what happens: `dry` (default) prints each stale topic (`sweep dry: <topic>`), each retired entity config (`sweep dry: remove <topic>`) and a count to the journal; `apply` clears them; `off` skips. It runs once per start, and nothing published this run is ever cleared.
+
+When a collector's init is done:
+- `support/` collectors and `chia_farm_size`: after the first poll (all their states published).
+- `chia_harvester_processing_time`: after the first eligible-plots line in `debug.log` (time and plot count). It follows the log from the end, so until the harvester logs a signage point (about every 10 s while farming) it has published only discovery and availability, and it does not sweep.
+- `chia_recompute_server_processing_time`: after the first `took … ms` line in the `chia_recompute_server` journal. If the recompute server is idle, it does not sweep until work arrives.
+
+Deploy: `git pull`, `systemctl restart xmr_network xmr_eur_price pearl_network pearl_usdt_price usdt_eur_price` and, on Chia hosts, `systemctl restart chia_farm_size chia_harvester_processing_time chia_recompute_server_processing_time`. Check `journalctl -u <service>` for the `sweep dry:` lines, then set `MQTT_SWEEP=apply` in `.env` and restart them again if the list looks right. `MQTT_SWEEP` is per host `.env`, so each host is switched on separately.
 
 ## Configuration
 
@@ -292,7 +302,7 @@ LHM_URL=
 | `MQTT_HOST`, `MQTT_PORT` | broker (default `localhost:1883`) |
 | `MQTT_USER`, `MQTT_PASS` | broker credentials, optional |
 | `MQTT_PREFIX` | discovery prefix (default `homeassistant`) |
-| `MQTT_SWEEP` | stale retained-topic sweep after init: `dry` (default, print only), `apply` (clear), `off` |
+| `MQTT_SWEEP` | after init: stale retained-topic sweep and retired-entity removal; `dry` (default, print only), `apply` (clear and remove), `off` |
 | **XMRig** | |
 | `XMRIG_HOST`, `XMRIG_PORT` | XMRig HTTP API (default `127.0.0.1:44444`) |
 | `XMRIG_TOKEN` | XMRig HTTP bearer token, optional |
