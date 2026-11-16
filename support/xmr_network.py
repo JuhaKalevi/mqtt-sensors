@@ -63,7 +63,6 @@ DISCOVERY_REW["suggested_display_precision"] = 6
 DISCOVERY_RATE = sensor("Monero XMR per H/s per Day", STATE_RATE, OBJ_RATE, "XMR/H/s/d")
 
 conn = http.client.HTTPSConnection("xmrchain.net", timeout=15)
-conn.connect()
 
 def get(path):
     conn.request("GET", path)
@@ -98,7 +97,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_RATE, json.dumps(DISCOVERY_RATE))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=(DEVICE_ID, OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE), entities=tuple(f"sensor/{o}" for o in (OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE)), retired=("sensor/xmr_network_hashrate",))
+conn.connect()
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -113,6 +113,7 @@ try:
         client.publish(ATTRS_CUR, json.dumps({"window_secs": window_secs, "window_blocks": window_blocks}))
         client.publish(STATE_REW, format(reward, ".15g"), retain=True)  # retained: slow interval
         client.publish(STATE_RATE, format(rate, ".15g"), retain=True)  # retained: read at startup by xmrig_status
+        client.init_done()
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass

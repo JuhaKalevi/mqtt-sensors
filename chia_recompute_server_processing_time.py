@@ -34,7 +34,13 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_TIME, json.dumps(DISCOVERY_TIME))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_recompute_server_{HOSTNAME}", OBJ_TIME), entities=(f"sensor/{OBJ_TIME}",), retired=(
+    f"sensor/chia_recompute_server_{HOSTNAME}",
+    f"sensor/chia_recompute_time_{HOSTNAME}",
+    f"sensor/chia_recompute_fail_{HOSTNAME}",
+    f"sensor/chia_recompute_server_time_{HOSTNAME}",
+    f"sensor/chia_recompute_server_fail_{HOSTNAME}",
+))
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -46,6 +52,7 @@ with SERVICES.follow_log(SERVICE) as lines:
             if not m:
                 continue
             client.publish(STATE_TIME, format(float(m.group(1)) / 1000.0, ".15g"))
+            client.init_done()
     except KeyboardInterrupt:
         pass
     finally:

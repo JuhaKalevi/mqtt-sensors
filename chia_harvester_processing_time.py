@@ -52,7 +52,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_harvester_{HOSTNAME}", OBJ_TIME, OBJ_PLOTS), entities=(f"sensor/{OBJ_TIME}", f"sensor/{OBJ_PLOTS}"))
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -66,6 +66,7 @@ try:
             if m:
                 client.publish(STATE_TIME, format(float(m.group(1)), ".15g"))
                 client.publish(STATE_PLOTS, m.group(2))
+                client.init_done()
             continue
         try:
             cur = os.stat(LOG).st_ino

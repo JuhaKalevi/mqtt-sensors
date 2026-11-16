@@ -76,9 +76,6 @@ def rpc(c, path):
     c.request("POST", path, body=b"{}", headers={"Content-Type": "application/json"})
     return json.loads(c.getresponse().read())
 
-farmer = chia_conn("farmer", 8559)
-node = chia_conn("full_node", 8555)
-
 def farm_stats():
     data = rpc(farmer, "/get_harvesters_summary")
     plots = size = effective = 0
@@ -100,8 +97,10 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_ETA, json.dumps(DISCOVERY_ETA))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_farm_{HOSTNAME}", OBJ_PLOTS, OBJ_SIZE, OBJ_EFF, OBJ_NET, OBJ_ETA), entities=tuple(f"sensor/{o}" for o in (OBJ_PLOTS, OBJ_SIZE, OBJ_EFF, OBJ_NET, OBJ_ETA)))
 client.on_connect = on_connect
+farmer = chia_conn("farmer", 8559)
+node = chia_conn("full_node", 8555)
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
 
@@ -113,6 +112,7 @@ try:
         client.publish(STATE_EFF, f"{effective:.3f}")
         client.publish(STATE_NET, f"{netspace:.3f}")
         client.publish(STATE_ETA, f"{eta:.0f}")
+        client.init_done()
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass

@@ -157,6 +157,17 @@ SAT per sample: CHECK POWER MODE (`E5h`, non-data, `CK_COND` so the bridge retur
 
 Ids: the ATA serial (and full ATA model) from `vpd_pg89` for `drivetemp`, or from IDENTIFY for SAT, so both paths give the same id. Then the SCSI `serial` / `vpd_pg80`, `wwid`, then for USB the enclosure's `idVendor` + `idProduct` + `serial` + LUN. Nothing stable: skipped; `sdX` is never used. NVMe uses the controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<id>_<host>`. USB drives get ` (USB)` in the HA name. `/sys/class/hwmon` and `/sys/block` are rescanned each sample (`device` links re-checked), so drives come and go, and a reused `hwmonN` / `sdX` is a new drive. A failed read skips that sample for that drive only. It exits only if there is no `drivetemp`/`nvme` hwmon and no candidate `sd*` disk.
 
+Drives that are gone (another enclosure, a replaced disk) leave entities behind: early versions retained discovery, and states are retained, so HA recreates them on every restart. `hwmon_drive_temperature.py` has no automatic sweep (a drive in standby publishes nothing until it spins up, so "not published" does not mean "gone"); clear them by hand instead:
+
+```sh
+./hwmon_drive_temperature.py --list            # present drives + every own retained object, marked present / stale
+./hwmon_drive_temperature.py --purge-stale     # empty config + cleared retained topics for the stale ones only
+python3 mqtt_purge_retained.py --script hwmon_drive_temperature.py --delete --stale   # same, via the purge tool
+python3 mqtt_purge_retained.py --entity sensor/hwmon_drive_temperature_<id>_<host> --delete   # a ghost with nothing retained
+```
+
+The present drives' object ids come from sysfs only (no ATA/SCSI command, nothing opened under `/dev`, so a standby drive is not woken): `drivetemp`/`nvme` hwmon drives through the same `identity()` the collector uses, every other `sd*` disk through `identity()` as well, which uses the IDENTIFY data the kernel caches in `vpd_pg89`, the same serial the collector's SAT IDENTIFY gives. A candidate `sd*` disk without `vpd_pg89` (typically behind a USB bridge) may have a different id from IDENTIFY, so `--list` shows it as `unknown` and `--purge-stale` refuses (exit 1) while it is attached; remove single ghosts with `--entity` then. Scope is objects `hwmon_drive_temperature_*_<host>` with an exact `_<host>` suffix, so another host's drives are never touched; the availability topic is never touched. A ghost with no retained topic at all cannot be seen over MQTT: take its object id from the HA entity id (`sensor.<object id>`) and use `--entity`. `--purge` removes all of this host's drive entities, present ones too (they come back with history lost when the collector runs again). Stop the collector before either purge (`systemctl stop hwmon_drive_temperature`), or a drive it is reading recreates its entity.
+
 Output: one summary line at start, then one line per drive when it is first seen, plus one when a standby drive is later identified. No per-sample output:
 
 ```
@@ -231,12 +242,42 @@ Publish is not retained unless there is a clear, commented reason. Discovery con
 
 The exceptions: `kmsg_reset_reason.py` retains config, attributes and state because it is run-once; `xmr_eur_price` and `xmr_per_hs_day` retain state so `xmrig_status` can read them at startup (same 60 s interval for the other retained `xmr_network` states: difficulty and block reward); the Monero block-time entities are not retained; `pearl_usdt_price`, `usdt_eur_price` and `pearl_network` are not retained (nothing reads them at startup; HA shows a value within 60 s); `grok_usage` and `hwmon_drive_temperature` retain state (and grok attributes) because they publish at 60 s or slower. Package power is published every second and is not retained. `ELECTRICITY_EUR_PER_KWH_TOPIC`, when used, is an external topic this repo does not publish.
 
-Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host.
+Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host. `--entity COMPONENT/OBJECT` (repeatable) limits the list to that one entity: its retained topics plus its `config` topic, so `--delete` also removes an entity whose discovery was never retained (Home Assistant keeps non-retained discovery in memory until it restarts, and will not let you delete it in the UI meanwhile). Removing an entity this way also drops its history.
 
 ```sh
 python3 mqtt_purge_retained.py
 python3 mqtt_purge_retained.py --delete
+python3 mqtt_purge_retained.py --entity sensor/pearl_network_hashrate --delete
+python3 mqtt_purge_retained.py --script support/pearl_network.py
+python3 mqtt_purge_retained.py --script support/pearl_network.py --delete
 ```
+
+`--script PATH` covers every entity and retained topic of a collector that takes the flags below, by running that script with `--list`, `--purge` with `--delete`, or `--purge-stale` with `--delete --stale` (`hwmon_drive_temperature.py`).
+
+Collectors with a defined init phase also sweep their own stale retained topics and remove their retired entities. So far that is the `support/` collectors (`xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price`, `usdt_eur_price`) and the Chia collectors (`chia_farm_size`, `chia_harvester_processing_time`, `chia_recompute_server_processing_time`). Once it has published everything it expects, each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id is one of its own ids, or one of them followed by `_…` (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`; each Chia collector owns exactly its availability id and entity ids, all ending in `_<host>`, so another host's ids never match). Any of those topics it did not publish this run is stale, for example the old retained `xmr_network_hashrate` state.
+
+A collector also lists its retired entities (ones it no longer publishes): `xmr_network` retires `xmr_network_hashrate`, `pearl_network` `pearl_network_hashrate`, `pearl_usdt_price` the old CoinGecko `pearl_eur_price`, and `chia_recompute_server_processing_time` the pre-rename `chia_recompute_*_<host>` ids (`chia_recompute_server`, `chia_recompute_time`, `chia_recompute_fail`, `chia_recompute_server_time`, `chia_recompute_server_fail`). For each, it clears any retained topic under it and publishes an empty `config`, which removes the entity from HA right away even if its discovery was never retained, and drops its history. A rename should keep the history: rename the entity in HA first, then retire the old id.
+
+`MQTT_SWEEP` decides what happens: `dry` (default) prints each stale topic (`sweep dry: <topic>`), each retired entity config (`sweep dry: remove <topic>`) and a count to the journal; `apply` clears them; `off` skips. It runs once per start, and nothing published this run is ever cleared.
+
+When a collector's init is done:
+- `support/` collectors and `chia_farm_size`: after the first poll (all their states published).
+- `chia_harvester_processing_time`: after the first eligible-plots line in `debug.log` (time and plot count). It follows the log from the end, so until the harvester logs a signage point (about every 10 s while farming) it has published only discovery and availability, and it does not sweep.
+- `chia_recompute_server_processing_time`: after the first `took … ms` line in the `chia_recompute_server` journal. If the recompute server is idle, it does not sweep until work arrives.
+
+Every sweep-enabled collector, and `hwmon_drive_temperature.py`, also takes `--list`, `--purge` and `--help`, and then exits without starting its loop or opening its source (API connection, Chia RPC, log, drive). `--help` prints the flags it supports and exits 0; an unknown flag prints the usage and exits 2.
+- `--list` (read-only) prints its current entity config topics, its retired entity config topics, and every retained topic in its scope on the broker (marked `(retained)`).
+- `--purge` force-deletes all of them: an empty payload on each `config` (removes the entity and its history from HA, retained or not) and a cleared retained message on every retained topic in scope. It ignores `MQTT_SWEEP`. Stop the collector first, or its next publish recreates the entities.
+
+```sh
+systemctl stop pearl_network
+python3 support/pearl_network.py --list
+python3 support/pearl_network.py --purge
+```
+
+Run them from the repo directory so `.env` is found (`mqtt_purge_retained.py --script` does that for you).
+
+Deploy: `git pull`, `systemctl restart xmr_network xmr_eur_price pearl_network pearl_usdt_price usdt_eur_price` and, on Chia hosts, `systemctl restart chia_farm_size chia_harvester_processing_time chia_recompute_server_processing_time`. Check `journalctl -u <service>` for the `sweep dry:` lines, then set `MQTT_SWEEP=apply` in `.env` and restart them again if the list looks right. `MQTT_SWEEP` is per host `.env`, so each host is switched on separately.
 
 ## Configuration
 
@@ -248,6 +289,7 @@ MQTT_PORT=1883
 MQTT_USER=
 MQTT_PASS=
 MQTT_PREFIX=homeassistant
+MQTT_SWEEP=dry
 
 XMRIG_HOST=127.0.0.1
 XMRIG_PORT=44444
@@ -287,6 +329,7 @@ LHM_URL=
 | `MQTT_HOST`, `MQTT_PORT` | broker (default `localhost:1883`) |
 | `MQTT_USER`, `MQTT_PASS` | broker credentials, optional |
 | `MQTT_PREFIX` | discovery prefix (default `homeassistant`) |
+| `MQTT_SWEEP` | after init: stale retained-topic sweep and retired-entity removal; `dry` (default, print only), `apply` (clear and remove), `off` |
 | **XMRig** | |
 | `XMRIG_HOST`, `XMRIG_PORT` | XMRig HTTP API (default `127.0.0.1:44444`) |
 | `XMRIG_TOKEN` | XMRig HTTP bearer token, optional |

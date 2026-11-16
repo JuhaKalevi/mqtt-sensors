@@ -32,7 +32,6 @@ DISCOVERY = {
 DISCOVERY["suggested_display_precision"] = 2
 
 conn = http.client.HTTPSConnection("api.kraken.com", timeout=15)
-conn.connect()
 
 def spot():
     conn.request("GET", "/0/public/Ticker?pair=XMREUR")
@@ -47,7 +46,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG, json.dumps(DISCOVERY))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=("xmr_eur",), entities=(f"sensor/{OBJ}",))
+conn.connect()
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -55,6 +55,7 @@ client.loop_start()
 try:
     while True:
         client.publish(STATE, format(spot(), ".15g"), retain=True)  # retained: read at startup by xmrig_status
+        client.init_done()
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass

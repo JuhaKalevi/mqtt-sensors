@@ -40,7 +40,6 @@ DISCOVERY = sensor("Price", OBJ)
 DISCOVERY["json_attributes_topic"] = ATTRS
 
 kraken_conn = http.client.HTTPSConnection("api.kraken.com", timeout=15)
-kraken_conn.connect()
 
 def kraken():
     kraken_conn.request("GET", "/0/public/Ticker?pair=USDTEUR")
@@ -60,7 +59,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.publish(f"{PREFIX}/sensor/{obj}/config", json.dumps(sensor(name, obj)))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=("usdt_eur",), entities=(f"sensor/{OBJ}",) + tuple(f"sensor/usdt_eur_{src}_price" for src in SOURCES))
+kraken_conn.connect()
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -74,6 +74,7 @@ try:
             client.publish(f"{PREFIX}/sensor/usdt_eur_{src}_price/state", format(price, ".15g"))
         client.publish(f"{PREFIX}/sensor/{OBJ}/state", format(MODES[MODE](prices), ".15g"))
         client.publish(ATTRS, json.dumps({"mode": MODE, "slippage_pct": SLIPPAGE_PCT}))
+        client.init_done()
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass
