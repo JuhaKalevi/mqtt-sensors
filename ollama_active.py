@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """Ollama service active → MQTT + Home Assistant switch (service_manager(); start/stop only in control mode)."""
 import json, time
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device, create_client, make_switch_discovery,
-    switch_mode, make_switch_on_message, service_manager
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, create_client, make_switch_discovery,
+    switch_mode, make_switch_on_message, handle_cli, slot_id, slot_lists
 )
+from lib.system_common import service_manager
 
 SERVICE = "ollama"
-HOSTNAME = get_hostname()
-DEVICE, DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"ollama-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, DEVICE_ID = make_device()
+CLIENT_ID = f"ollama-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+handle_cli(CLIENT_ID, settings, **slot_lists(("switch/ollama_active",), availability=("ollama",)))
 SERVICES = service_manager()
 MODE = switch_mode("OLLAMA_SWITCH_MODE")
 
-OBJ = f"ollama_active_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/ollama_{HOSTNAME}/availability"
+OBJ = slot_id("ollama_active")
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('ollama')}/availability"
 STATE = f"{PREFIX}/switch/{OBJ}/state"
 CMD = f"{PREFIX}/switch/{OBJ}/set"
 CONFIG = f"{PREFIX}/switch/{OBJ}/config"
@@ -35,7 +37,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.subscribe(CMD)
         client.publish(AVAIL_T, "online")
 
-print(f"ollama_active: host={HOSTNAME} mode={MODE}", flush=True)
+print(f"ollama_active: machine={MACHINE_ID} mode={MODE}", flush=True)
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Grok subscription credit usage → MQTT + Home Assistant discovery (Grok CLI billing endpoint, token from the CLI's auth.json)."""
 import json, os, time, http.client
-from mqtt_common import get_hostname, get_mqtt_settings, create_client, make_sensor_discovery
+from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make_sensor_discovery, handle_cli
 
 HOSTNAME = get_hostname()
 DEVICE = {"identifiers": ["grok"], "name": "Grok"}
 CLIENT_ID = f"grok-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+handle_cli(CLIENT_ID, settings, entities=("sensor/grok_usage",), owned=("grok",))
 AUTH_PATH = os.environ["GROK_AUTH_PATH"]
 INTERVAL = float(os.environ["GROK_USAGE_INTERVAL"])
 
@@ -17,8 +18,7 @@ STATE = f"{PREFIX}/sensor/{OBJ}/state"
 ATTRS = f"{PREFIX}/sensor/{OBJ}/attributes"
 CONFIG = f"{PREFIX}/sensor/{OBJ}/config"
 DISCOVERY = make_sensor_discovery("Grok Usage", STATE, AVAIL_T, OBJ, DEVICE,
-                                  unit="%", device_class=None, state_class="measurement")
-DISCOVERY["json_attributes_topic"] = ATTRS
+                                  unit="%", state_class="measurement", json_attributes_topic=ATTRS)
 
 conn = http.client.HTTPSConnection("cli-chat-proxy.grok.com", timeout=15)
 conn.connect()

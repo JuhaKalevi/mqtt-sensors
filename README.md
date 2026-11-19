@@ -7,7 +7,7 @@ Long-lived root processes that publish host stats to MQTT with Home Assistant di
 - [AGENT.md](AGENT.md): contract for coding agents adding a sensor (an `AGENTS.md`).
 - [windows/](windows/README.md): Windows power and XMRig collectors plus a tray launcher.
 
-Collectors on a host share one HA device `linux_host_<hostname>`, named after the host. Device-scoped power-supply batteries get their own HA device linked with `via_device`.
+Collectors on a host share one HA device `linux_host_<slot>`, named `<slot>` with underscores as spaces. `<slot>` is `MACHINE_ID` from `.env` exactly as written: the area in Finnish + the machine, e.g. `Olohuone_PC1` (device `linux_host_Olohuone_PC1` named `Olohuone PC1`, entities `sensor.olohuone_pc1_…`) or `Ulkovarasto_PC1`, else the hostname as-is (`B850Pro`); see [Identity](#identity). Device-scoped power-supply batteries get their own HA device linked with `via_device`.
 
 ![Home Assistant — M710q](screen.png)
 
@@ -28,6 +28,7 @@ Collectors on a host share one HA device `linux_host_<hostname>`, named after th
 | `hwmon_drive_temperature.py` | per-drive temperature (°C) | `/sys/class/hwmon` + SAT `SG_IO`, every 60 s |
 | `power_supply_battery.py` | per-battery capacity (%) | `/sys/class/power_supply`, each second |
 | `kmsg_reset_reason.py` | previous system reset reason (text, hex `code` attribute), once per boot | `/dev/kmsg` |
+| `etc_debian_version.py` | contents of `/etc/debian_version` (text), on change | inotify on `/etc` |
 | `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
 | `support/xmr_eur_price.py` | XMR/EUR (EUR) | Kraken public ticker, 60 s |
 | `support/xmr_network.py` | Monero difficulty, nominal / difficulty-period / current block time (s), block reward (XMR), XMR/H/s/day | xmrchain.net, 60 s |
@@ -40,9 +41,9 @@ Run only the collectors that apply. Energy is `total_increasing` kWh integrated 
 
 - **Chia:** paths are uid 1000's `.chia/mainnet` (`chia_root()`), never `/root` or a username. ETA is `(netspace / effective) * 18.75`. Recompute work arrives in 10 s bursts; 0.2–5 s is normal. Harvester parses `plots were eligible for farming … Time: N s. Total N plots`, about every 9 s; a gap or a time climbing toward the signage window is the error signal.
 - **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; retained discovery is cleared when a node disappears. `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
-- **`support/`:** helpers that are not host metrics (global object ids, no hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Each coin publishes three block times (s): **nominal** (the fixed coin parameter), **difficulty-period** (what the current difficulty is set for; equals nominal unless a DAA change cap was hit; Pearl and Monero have no such cap), and **current** (a loose recent average; window in `window_secs`/`window_blocks` attributes). Network hashrate is not published; implied current hashrate is work per block / current block time (or target hashrate × nominal / current) and can be derived in HA if needed. Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Market devices are real exchange-traded pairs only (`XMR/EUR`, `PEARL/USDT`, `USDT/EUR`), one device per pair with a generic `Price` (avg, max or min of its per-source `<Source> Price` entities, per `<BASE>_<QUOTE>_PRICE_MODE`); a fiat value multiplies real steps (PEARL/USDT × USDT/EUR), each discounted by its own `slippage_pct` attribute (set per pair in `.env`); each coin's network stats are one device (`Monero`, `Pearl`).
+- **`support/`:** helpers that are not host metrics (global object ids, no slot or hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Each coin publishes three block times (s): **nominal** (the fixed coin parameter), **difficulty-period** (what the current difficulty is set for; equals nominal unless a DAA change cap was hit; Pearl and Monero have no such cap), and **current** (a loose recent average; window in `window_secs`/`window_blocks` attributes). Network hashrate is not published; implied current hashrate is work per block / current block time (or target hashrate × nominal / current) and can be derived in HA if needed. Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Market devices are real exchange-traded pairs only (`XMR/EUR`, `PEARL/USDT`, `USDT/EUR`), one device per pair with a generic `Price` (avg, max or min of its per-source `<Source> Price` entities, per `<BASE>_<QUOTE>_PRICE_MODE`); a fiat value multiplies real steps (PEARL/USDT × USDT/EUR), each discounted by its own `slippage_pct` attribute (set per pair in `.env`); each coin's network stats are one device (`Monero`, `Pearl`).
 
-Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. Availability is per collector under `sensor/<name>_<host>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `ollama`, `power_supply`, `hwmon_drive_temperature`, `xmrig`, `xmr_eur`, `xmr_network`, `pearl_usdt`, `usdt_eur`, `pearl_network`; `grok` uses `sensor/grok/availability` with no host; LightDM keeps `binary_sensor/lightdm_<host>/availability` from before it became a switch.
+Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. `<object>` is the unique_id, and the HA entity id is `<platform>.<object>` (`default_entity_id`). Host collectors' availability is under `sensor/<slot>_<name>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `lightdm`, `ollama`, `power_supply`, `hwmon_sensors`, `input_apm`, `xmrig`, `lhm_sensors` (`cpu_package_power` uses its object); `hwmon_drive_temperature` keeps `sensor/hwmon_drive_temperature_<host>/availability` for now. `support/` helpers use `sensor/<name>/availability` (`xmr_eur`, `xmr_network`, `pearl_usdt`, `usdt_eur`, `pearl_network`), and `grok` uses `sensor/grok/availability`.
 
 ## XMRig
 
@@ -54,7 +55,7 @@ Needs the XMRig HTTP API (`XMRIG_HOST`/`XMRIG_PORT`, `XMRIG_TOKEN` when set). Th
 - **Profitability factor:** `revenue / cost` (1.0 ≈ break-even), revenue `hashrate * xmr_per_hs_day / 24 * xmr_eur`, cost `mining_W / 1000 * €/kWh`. Needs a spot price source (see Configuration) plus MQTT package power (every second, not retained), and retained `xmr_per_hs_day` and XMR/EUR; missing inputs are printed once a minute. Publish-only, no automation.
 - **Mining power:** raw `package_W` until a 100%-intensity baseline exists. The baseline is the max `package_W` over the first ~5 min at 100% (not paused), or `XMRIG_POWER_BASELINE_W` right away. Then `package_W` at 100%, `min(package_W, f * baseline)` when `f = threads/max_threads < 1`, 0 at 0%. While paused, the last hashrate and mining watts are kept in RAM.
 
-Contention handling is shared by Linux and Windows (`MiningIntensity` and `Contention` in `xmrig_common.py`) and runs with `XMRIG_CONTENTION_MODE=control`. `f = threads / max_threads`; hashrate means the 30 s average of the 10 s hashrate.
+Contention handling is shared by Linux and Windows (`MiningIntensity` and `Contention` in `lib/xmrig_common.py`) and runs with `XMRIG_CONTENTION_MODE=control`. `f = threads / max_threads`; hashrate means the 30 s average of the 10 s hashrate.
 
 - **Baseline and plateau:** max package W and max 10 s hashrate over the first ~5 min at 100%, then a ±5% drift check every ~5 min against the rolling ~15 min max. `XMRIG_POWER_BASELINE_W` / `XMRIG_HASHRATE_PLATEAU_HS` hints apply from the start; a measurement replaces a hint only within ±5% (else it is rejected and logged), so set hints close to the true values.
 - **Pause:** judging and timers hold on a thread change ramp, a pool/connection change (`connection.pool`/`ip` change or `uptime` reset in `/2/summary`, which covers the dev fee switch), 0 H/s, or 10 s samples over 30 s deviating more than 5% from their mean, until 15 samples are within ±5%. 0 H/s, pool changes and pauses over 60 s are logged.
@@ -107,31 +108,39 @@ If you sshfs as a user who is already on a seat, they were already in the list; 
 `kmsg_reset_reason.service` is `Type=oneshot` after `network-online.target`; `Restart=on-failure` covers a broker that is not up yet. Enable it so it runs on every boot (`--now` also publishes the current boot):
 
 ```
-systemctl enable --now /root/mqtt-sensors/kmsg_reset_reason.service
+systemctl enable --now /root/mqtt-sensors/systemd/kmsg_reset_reason.service
+```
+
+## Debian version
+
+`etc_debian_version.py` publishes the contents of `/etc/debian_version` (e.g. `13.2`, `trixie/sid`) as `Debian Version`. It does not poll. It holds one inotify watch on `/etc` (via `ctypes` and libc, no new dependency) for `IN_CLOSE_WRITE` and `IN_MOVED_TO`, so an in-place write and dpkg's atomic rename both wake it. It sleeps in a blocking `read()`, re-reads the file only when the event names `debian_version`, and publishes only when the contents differ from the last published value. A deleted file keeps the last value. Like other long-running collectors it is not retained: it has an availability topic, and republishes discovery, `online` and the current value when Home Assistant announces `online`, and the value with each heartbeat `online`.
+
+```
+systemctl enable --now /root/mqtt-sensors/systemd/etc_debian_version.service
 ```
 
 ## Unit switches (LightDM, Ollama)
 
-`lightdm_active.py` publishes a HA `switch` (`switch/lightdm_active_<host>/{config,state,set}`). State is the `lightdm.service` cgroup dir existing, checked each second. On connect it clears the retained discovery and state of the old `binary_sensor/lightdm_active_<host>` so HA drops that entity.
+`lightdm_active.py` publishes a HA `switch` (`switch/<slot>_lightdm_active/{config,state,set}`). State is the `lightdm.service` cgroup dir existing, checked each second.
 
-`ollama_active.py` does the same for `ollama.service`: `switch/ollama_active_<host>/{config,state,set}`, HA name `Ollama Active`, availability `sensor/ollama_<host>/availability`. Enable it only on hosts that have `ollama.service` as a system unit.
+`ollama_active.py` does the same for `ollama.service`: `switch/<slot>_ollama_active/{config,state,set}`, HA name `Ollama Active`, availability `sensor/<slot>_ollama/availability`. Enable it only on hosts that have `ollama.service` as a system unit.
 
 Each has its own opt-in in `.env`, `LIGHTDM_SWITCH_MODE` and `OLLAMA_SWITCH_MODE`:
 
 - `read_only` (default, also when unset or empty): HA requires a `command_topic`, so the switch has one, but commands are ignored (printed) and the real state is re-published, so the toggle snaps back.
 - `control`: `ON` runs `systemctl start <unit>`, `OFF` runs `systemctl stop <unit>` (`lightdm.service` / `ollama.service`), prints the action and exit code, then re-publishes the real state. The collector runs as root, so no sudoers or polkit rule is needed. For LightDM, `OFF` ends any graphical session on that seat.
 
-Any other value exits. The mode check and the switch discovery/command handling are small helpers in `mqtt_common.py`, and service state/start/stop go through `service_manager()` (see Other init systems); each script only names its service, entity, and setting.
+Any other value exits. The mode check and the switch discovery/command handling are small helpers in `lib/mqtt_common.py`, and service state/start/stop go through `service_manager()` (see Other init systems); each script only names its service, entity, and setting.
 
 ```
-systemctl enable --now /root/mqtt-sensors/ollama_active.service
+systemctl enable --now /root/mqtt-sensors/systemd/ollama_active.service
 ```
 
-Upgrading a LightDM host: nothing changes for HA or `.env` (same entity, topics, and `LIGHTDM_SWITCH_MODE`). `cd /root/mqtt-sensors && git pull && systemctl restart lightdm_active` picks up the new `mqtt_common.py`.
+Upgrading a LightDM host: nothing changes for HA or `.env` (same entity, topics, and `LIGHTDM_SWITCH_MODE`). `cd /root/mqtt-sensors && git pull && systemctl restart lightdm_active` picks up the new `lib/`.
 
 ## Other init systems
 
-Every systemd interaction goes through an interface in `mqtt_common.py`; collectors never call systemd tools or read its files directly:
+Every systemd interaction goes through an interface in `lib/system_common.py`; collectors never call systemd tools or read its files directly:
 
 - `service_manager()`: `is_active(name)`, `start(name)`, `stop(name)`, `follow_log(name)` (context manager yielding new log lines). `name` is the bare service name (`lightdm`, `ollama`, `chia_recompute_server`). Shipped backend `SystemdServiceManager`: cgroup dir read, `systemctl start|stop`, `journalctl -u <name> -f -n 0 -o cat`. Used by `lightdm_active.py`, `ollama_active.py`, `chia_recompute_server_processing_time.py`.
 - `session_source()`: `active_users()` (names with an `active` or `online` session). Shipped backend `LogindSessionSource`: `/run/systemd/users`, which elogind also writes, so elogind hosts need nothing. Used by `loginctl_active_users.py`.
@@ -140,7 +149,7 @@ For OpenRC, runit, s6 or another init, write a class with the same methods and r
 
 ## Hardware sensors
 
-`hwmon_sensors.py` publishes every hwmon temperature (°C), fan (RPM) and voltage (V) every 5 s from held sysfs fds: CPU (`k10temp` Tctl/Tccd, `coretemp`), the board Super-I/O chip (whatever driver is loaded: `nct6775`, `nct6687`, `it87`, …), `amdgpu`, and so on. Drives (`drivetemp`, `nvme`) are left to the drive temperature collector; `nouveau` is skipped. No subprocess. Names are `<chip> <label> <kind>`; unique_id `hwmon_<chip>_<input>_<hostname>`. Hide unwired fan headers or bogus voltages with `HWMON_SENSORS_EXCLUDE=nct6798/fan5,nct6798/in7` (`chip/label`; the label is the kernel `_label`, else the input name). Labels are what the sensor names show, so the list reads like the HA names.
+`hwmon_sensors.py` publishes every hwmon temperature (°C), fan (RPM) and voltage (V) every 5 s from held sysfs fds (only CPU and GPU temperatures stay on the device page: `k10temp`, `coretemp`, `zenpower`, `amdgpu`, `radeon`, `i915`, `xe`; every other temperature, fan and voltage is a diagnostic entity, under Diagnostic. `windows/lhm_sensors.py` does the same: only the temperatures of LHM `amdcpu`/`intelcpu`/`gpu-*` hardware stay, and fans, voltages, clocks, loads and controls go to Diagnostic): CPU (`k10temp` Tctl/Tccd, `coretemp`), the board Super-I/O chip (whatever driver is loaded: `nct6775`, `nct6687`, `it87`, …), `amdgpu`, and so on. Drives (`drivetemp`, `nvme`) are left to the drive temperature collector; `nouveau` is skipped. No subprocess. Names are `<chip> <label> <kind>`; unique_id `mb_<board>_hwmon_<chip>_<input>` ([Identity](#identity)). Hide unwired fan headers or bogus voltages with `HWMON_SENSORS_EXCLUDE=nct6798/fan5,nct6798/in7` (`chip/label`; the label is the kernel `_label`, else the input name). Labels are what the sensor names show, so the list reads like the HA names.
 
 `NVIDIA_GPU_STATS=1` extends `nvidia_gpu_power.py` with GPU temperature, memory temperature, fan %, core/memory clock, utilization, power limit, pstate and throttle reasons, all from the same `nvidia-smi --loop=1`. Empty keeps power + energy only. Fields the GPU reports as `[N/A]` get no entity.
 
@@ -148,25 +157,25 @@ For OpenRC, runit, s6 or another init, write a class with the same methods and r
 
 On USB bridges that cannot report the drive's power state, this collector reads the drive every interval and may keep it from spinning down. If that matters, raise `DRIVE_TEMPERATURE_INTERVAL` or do not run the collector on that host.
 
-`hwmon_drive_temperature.py` runs no subprocess (no `smartctl`). Two sources, one `°C` / `temperature` sensor per drive on the host HA device:
+`hwmon_drive_temperature.py` runs no subprocess (no `smartctl`). Two sources, one `°C` / `temperature` sensor per drive, each drive its own HA device (`drive_<id>`, named by its model, with its serial, `via_device` = this machine):
 
 1. **hwmon:** `temp1_input` (millidegrees C) of every `/sys/class/hwmon/hwmon*` named `drivetemp` (SATA, also behind SAS HBAs and some USB bridges) or `nvme`. This is preferred when present.
 2. **SAT fallback:** every `/sys/block/sd*` not already covered by a `drivetemp` hwmon (same SCSI device path), not `removable`, with non-zero size. The collector holds `/dev/sdX` open (`O_RDONLY|O_NONBLOCK`) and sends read-only ATA commands in-process with the `SG_IO` ioctl (stdlib `fcntl` + `ctypes`) wrapped in SCSI ATA PASS-THROUGH(16), falling back to (12). This works without `drivetemp` and on `usb-storage` bridges where `drivetemp` never attaches. Needs root (`CAP_SYS_RAWIO`), which every collector here has.
 
 SAT per sample: CHECK POWER MODE (`E5h`, non-data, `CK_COND` so the bridge returns the ATA registers; CDB flags byte `2Ch` as smartmontools sends it). If it answers standby (`00h`/`01h`) or another non-active value, nothing more is sent and nothing is published; HA keeps the last value. If it answers active/idle (`FFh`, `80h`–`83h`, `41h`), or the bridge cannot answer at all (error, no or invalid registers), the collector goes on: IDENTIFY DEVICE (`ECh`) once per appearance for the real ATA serial/model and the SMART support/enabled bits, then SMART READ DATA (`B0h`/`D0h`) every sample, publishing raw byte 0 of attribute 194, else 190, if 1–99 °C.
 
-Ids: the ATA serial (and full ATA model) from `vpd_pg89` for `drivetemp`, or from IDENTIFY for SAT, so both paths give the same id. Then the SCSI `serial` / `vpd_pg80`, `wwid`, then for USB the enclosure's `idVendor` + `idProduct` + `serial` + LUN. Nothing stable: skipped; `sdX` is never used. NVMe uses the controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<id>_<host>`. USB drives get ` (USB)` in the HA name. `/sys/class/hwmon` and `/sys/block` are rescanned each sample (`device` links re-checked), so drives come and go, and a reused `hwmonN` / `sdX` is a new drive. A failed read skips that sample for that drive only. It exits only if there is no `drivetemp`/`nvme` hwmon and no candidate `sd*` disk.
+Ids: the ATA serial (and full ATA model) from `vpd_pg89` for `drivetemp`, or from IDENTIFY for SAT, so both paths give the same id. Then the SCSI `serial` / `vpd_pg80`, `wwid`, then for USB the enclosure's `idVendor` + `idProduct` + `serial` + LUN. Nothing stable: skipped; `sdX` is never used. NVMe uses the controller's `model` + `serial`. Object and unique_id are `hwmon_drive_temperature_<id>` (case kept, no hostname). Each drive's retained `attributes` topic carries `linked_machine` / `linked_hostname`, the machine it was last linked to: it decides which machine may clear the drive (`--purge-stale` only touches drives last linked to itself, a drive that left this machine is removed from HA only if it is not already linked elsewhere), and a live claim of the same drive by another machine is logged as `CONFLICT` (one drive cannot be in two machines: duplicate serial or a stale collector there). Availability is per machine (`<slot>_hwmon_drive_temperature`). USB drives get ` (USB)` in the HA name. `/sys/class/hwmon` and `/sys/block` are rescanned each sample (`device` links re-checked), so drives come and go, and a reused `hwmonN` / `sdX` is a new drive. A failed read skips that sample for that drive only. It exits only if there is no `drivetemp`/`nvme` hwmon and no candidate `sd*` disk.
 
-Drives that are gone (another enclosure, a replaced disk) leave entities behind: early versions retained discovery, and states are retained, so HA recreates them on every restart. `hwmon_drive_temperature.py` has no automatic sweep (a drive in standby publishes nothing until it spins up, so "not published" does not mean "gone"); clear them by hand instead:
+Drives that are gone (another enclosure, a replaced disk) leave entities behind: their states are retained, so HA recreates them on every restart. `hwmon_drive_temperature.py` has no automatic sweep (a drive in standby publishes nothing until it spins up, so "not published" does not mean "gone"); clear them by hand instead:
 
 ```sh
-./hwmon_drive_temperature.py --list            # present drives + every own retained object, marked present / stale
+./hwmon_drive_temperature.py --list            # present drives [current], drives last linked here but gone [stale]
 ./hwmon_drive_temperature.py --purge-stale     # empty config + cleared retained topics for the stale ones only
 python3 mqtt_purge_retained.py --script hwmon_drive_temperature.py --delete --stale   # same, via the purge tool
-python3 mqtt_purge_retained.py --entity sensor/hwmon_drive_temperature_<id>_<host> --delete   # a ghost with nothing retained
+python3 mqtt_purge_retained.py --entity sensor/hwmon_drive_temperature_<id> --delete   # a ghost with nothing retained
 ```
 
-The present drives' object ids come from sysfs only (no ATA/SCSI command, nothing opened under `/dev`, so a standby drive is not woken): `drivetemp`/`nvme` hwmon drives through the same `identity()` the collector uses, every other `sd*` disk through `identity()` as well, which uses the IDENTIFY data the kernel caches in `vpd_pg89`, the same serial the collector's SAT IDENTIFY gives. A candidate `sd*` disk without `vpd_pg89` (typically behind a USB bridge) may have a different id from IDENTIFY, so `--list` shows it as `unknown` and `--purge-stale` refuses (exit 1) while it is attached; remove single ghosts with `--entity` then. Scope is objects `hwmon_drive_temperature_*_<host>` with an exact `_<host>` suffix, so another host's drives are never touched; the availability topic is never touched. A ghost with no retained topic at all cannot be seen over MQTT: take its object id from the HA entity id (`sensor.<object id>`) and use `--entity`. `--purge` removes all of this host's drive entities, present ones too (they come back with history lost when the collector runs again). Stop the collector before either purge (`systemctl stop hwmon_drive_temperature`), or a drive it is reading recreates its entity.
+The present drives' object ids come from sysfs only (no ATA/SCSI command, nothing opened under `/dev`, so a standby drive is not woken): `drivetemp`/`nvme` hwmon drives through the same `identity()` the collector uses, every other `sd*` disk through `identity()` as well, which uses the IDENTIFY data the kernel caches in `vpd_pg89`, the same serial the collector's SAT IDENTIFY gives. A candidate `sd*` disk without `vpd_pg89` (typically behind a USB bridge) may have a different id from IDENTIFY, so `--list` shows it as `unknown` and `--purge-stale` refuses (exit 1) while it is attached; remove single ghosts with `--entity` then. Scope is drive objects whose retained `attributes` say they were last linked to this machine, so another machine's drives are never touched; the availability topic is never touched. A ghost with no retained topic at all cannot be seen over MQTT: take its object id from the HA entity id (`sensor.<object id>`) and use `--entity`. `--purge` removes all of this machine's drive entities, present ones too (they come back with history lost when the collector runs again). Stop the collector before either purge (`systemctl stop hwmon_drive_temperature`), or a drive it is reading recreates its entity.
 
 Output: one summary line at start, then one line per drive when it is first seen, plus one when a standby drive is later identified. No per-sample output:
 
@@ -230,60 +239,96 @@ Why not `smartctl -d sat`: a root subprocess per sample and a new package (AGENT
 1. Install the Grok CLI ([xai-org/grok-build](https://github.com/xai-org/grok-build)) as the user whose subscription it is.
 2. `grok login --device-auth` as that user. It writes `~/.grok/auth.json`.
 3. Set `GROK_AUTH_PATH` to that file's absolute path and `GROK_USAGE_INTERVAL` (e.g. `240`) in `.env`.
-4. `systemctl enable --now /root/mqtt-sensors/grok_usage.service`
+4. `systemctl enable --now /root/mqtt-sensors/systemd/grok_usage.service`
 
 The file is re-read on every poll and never written. The collector does not refresh the token: the CLI's refresh tokens are single-use and rotated under its own lock, so a second refresher would invalidate the CLI's login. When the CLI runs, it refreshes and rewrites the file, and the collector picks that up. When the access token has expired, the endpoint answers 401 and the collector exits with the status and body; systemd keeps restarting it until you run `grok login --device-auth` again.
 
-The access token lasts only hours. `grok models` triggers the CLI's own refresh (under its lock) without a prompt. To run it hourly as the CLI user, copy `user/grok-auth-refresh.service` and `user/grok-auth-refresh.timer` to `~/.config/systemd/user/`, then `systemctl --user enable --now grok-auth-refresh.timer` and `loginctl enable-linger $USER`. If a refresh is rejected, the CLI deletes `auth.json` and `grok login` is needed again.
+The access token lasts only hours. `grok models` triggers the CLI's own refresh (under its lock) without a prompt. To run it hourly as the CLI user, copy `systemd/user/grok-auth-refresh.service` and `systemd/user/grok-auth-refresh.timer` to `~/.config/systemd/user/`, then `systemctl --user enable --now grok-auth-refresh.timer` and `loginctl enable-linger $USER`. If a refresh is rejected, the CLI deletes `auth.json` and `grok login` is needed again.
 
 ## Retained messages
 
-Publish is not retained unless there is a clear, commented reason. Discovery configs and availability are never retained: collectors subscribe to `<prefix>/status` and republish them when Home Assistant announces `online`. While a collector is connected, `create_client` also republishes non-retained `online` on its availability topic every 60 s (`AVAILABILITY_HEARTBEAT_SEC` in `mqtt_common.py`). Home Assistant subscribes to an entity's topics only after it has processed the discovery config, so the `online` published right after discovery would be missed and the entity would sit unavailable until the next heartbeat; the heartbeat therefore also repeats `online` 2 s (`DISCOVERY_SETTLE_SEC`) after each `online` the collector publishes (startup, reconnect, HA `online`). Slow non-retained collectors (`support/` pairs and Pearl network) also replay their last states then (`replay_states=True`). After retained availability is cleared (for example by `mqtt_purge_retained.py --delete`), entities recover within that interval without restarting the collectors. Discovery config is still republished only on connect or when HA comes back `online`; if a purge also dropped an entity in HA, it comes back on the next collector reconnect or HA restart. The heartbeat stops when the collector publishes `offline` or calls `disconnect()`, so it cannot overwrite a clean shutdown. A sensor whose collector is gone can be deleted in HA (after any leftover retained messages are cleared).
+Publish is not retained unless there is a clear, commented reason. Discovery configs and availability are never retained: collectors subscribe to `<prefix>/status` and republish them when Home Assistant announces `online`. While a collector is connected, `create_client` also republishes non-retained `online` on its availability topic every 60 s (`AVAILABILITY_HEARTBEAT_SEC` in `lib/mqtt_common.py`). Home Assistant subscribes to an entity's topics only after it has processed the discovery config, so the `online` published right after discovery would be missed and the entity would sit unavailable until the next heartbeat; the heartbeat therefore also repeats `online` 2 s (`DISCOVERY_SETTLE_SEC`) after each `online` the collector publishes (startup, reconnect, HA `online`). Slow non-retained collectors (`support/` pairs and Pearl network) also replay their last states then (`replay_states=True`). After retained availability is cleared (for example by `mqtt_purge_retained.py --delete`), entities recover within that interval without restarting the collectors. Discovery config is still republished only on connect or when HA comes back `online`; if a purge also dropped an entity in HA, it comes back on the next collector reconnect or HA restart. The heartbeat stops when the collector publishes `offline` or calls `disconnect()`, so it cannot overwrite a clean shutdown. A sensor whose collector is gone can be deleted in HA (after any leftover retained messages are cleared).
 
 The exceptions: `kmsg_reset_reason.py` retains config, attributes and state because it is run-once; `xmr_eur_price` and `xmr_per_hs_day` retain state so `xmrig_status` can read them at startup (same 60 s interval for the other retained `xmr_network` states: difficulty and block reward); the Monero block-time entities are not retained; `pearl_usdt_price`, `usdt_eur_price` and `pearl_network` are not retained (nothing reads them at startup; HA shows a value within 60 s); `grok_usage` and `hwmon_drive_temperature` retain state (and grok attributes) because they publish at 60 s or slower. Package power is published every second and is not retained. `ELECTRICITY_EUR_PER_KWH_TOPIC`, when used, is an external topic this repo does not publish.
 
-Retained messages from older versions stay on the broker until cleared. `mqtt_purge_retained.py` lists them (dry run) for this host; `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host. `--entity COMPONENT/OBJECT` (repeatable) limits the list to that one entity: its retained topics plus its `config` topic, so `--delete` also removes an entity whose discovery was never retained (Home Assistant keeps non-retained discovery in memory until it restarts, and will not let you delete it in the UI meanwhile). Removing an entity this way also drops its history.
+`mqtt_purge_retained.py` lists retained messages (dry run) for this machine (topics containing its hostname or `MACHINE_ID`; hardware-keyed ids contain neither); `--delete` clears them with zero-length retained payloads, `--all` covers every retained topic on the broker (other integrations too, so check the list first), `--hostname NAME` picks another host. `--entity COMPONENT/OBJECT` (repeatable) limits the list to that one entity: its retained topics plus its `config` topic, so `--delete` also removes an entity whose discovery was never retained (Home Assistant keeps non-retained discovery in memory until it restarts, and will not let you delete it in the UI meanwhile). Removing an entity this way also drops its history.
 
 ```sh
 python3 mqtt_purge_retained.py
 python3 mqtt_purge_retained.py --delete
-python3 mqtt_purge_retained.py --entity sensor/pearl_network_hashrate --delete
+python3 mqtt_purge_retained.py --entity sensor/Olohuone_PC1_input_apm_total --delete
 python3 mqtt_purge_retained.py --script support/pearl_network.py
 python3 mqtt_purge_retained.py --script support/pearl_network.py --delete
 ```
 
-`--script PATH` covers every entity and retained topic of a collector that takes the flags below, by running that script with `--list`, `--purge` with `--delete`, or `--purge-stale` with `--delete --stale` (`hwmon_drive_temperature.py`).
+`--inventory` is read-only (it refuses `--delete`): it collects every object id under `<prefix>/+/+/+` for `--wait` seconds (retained messages, and live ones from running collectors), groups the topics per object, and asks each collector on this machine (`<script> --claim`, object ids on stdin, no connection) which ones it publishes now (`current`) or owns (`scope`: availability, stale drives). Objects no collector claims are listed as `UNCLAIMED`: other machines, other integrations, or leftovers. `--host TEXT` keeps only objects whose id contains TEXT. Collectors that cannot run here (no `nvidia-smi`, missing `.env` key) are listed as skipped. Non-retained discovery that nobody republishes is invisible on the broker; find those in HA (MQTT integration, unavailable) and remove them with `--entity`.
 
-Collectors with a defined init phase also sweep their own stale retained topics and remove their retired entities. So far that is the `support/` collectors (`xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price`, `usdt_eur_price`) and the Chia collectors (`chia_farm_size`, `chia_harvester_processing_time`, `chia_recompute_server_processing_time`). Once it has published everything it expects, each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id is one of its own ids, or one of them followed by `_…` (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`; each Chia collector owns exactly its availability id and entity ids, all ending in `_<host>`, so another host's ids never match). Any of those topics it did not publish this run is stale, for example the old retained `xmr_network_hashrate` state.
+```sh
+python3 mqtt_purge_retained.py --inventory --wait 10
+python3 mqtt_purge_retained.py --inventory --host Olohuone_PC1
+```
 
-A collector also lists its retired entities (ones it no longer publishes): `xmr_network` retires `xmr_network_hashrate`, `pearl_network` `pearl_network_hashrate`, `pearl_usdt_price` the old CoinGecko `pearl_eur_price`, and `chia_recompute_server_processing_time` the pre-rename `chia_recompute_*_<host>` ids (`chia_recompute_server`, `chia_recompute_time`, `chia_recompute_fail`, `chia_recompute_server_time`, `chia_recompute_server_fail`). For each, it clears any retained topic under it and publishes an empty `config`, which removes the entity from HA right away even if its discovery was never retained, and drops its history. A rename should keep the history: rename the entity in HA first, then retire the old id.
+`--script PATH` covers every entity and retained topic of a collector that takes the flags below, by running that script with `--list`, `--purge` with `--delete`, or `--purge-stale` with `--delete --stale` (every collector).
 
-`MQTT_SWEEP` decides what happens: `dry` (default) prints each stale topic (`sweep dry: <topic>`), each retired entity config (`sweep dry: remove <topic>`) and a count to the journal; `apply` clears them; `off` skips. It runs once per start, and nothing published this run is ever cleared.
+Collectors with a defined init phase also sweep their own stale retained topics. So far that is the `support/` collectors (`xmr_network`, `xmr_eur_price`, `pearl_network`, `pearl_usdt_price`, `usdt_eur_price`) and the Chia collectors (`chia_farm_size`, `chia_harvester_processing_time`, `chia_recompute_server_processing_time`). Once it has published everything it expects, each one subscribes to `<prefix>/+/+/+` for about 2 s and collects the retained messages whose object id is one of its own ids, or one of them followed by `_…` (`xmr_network` owns `xmr_network`, `xmr_difficulty`, its block-time ids, `xmr_block_reward` and `xmr_per_hs_day`; `xmr_eur_price` owns `xmr_eur`; `pearl_network` likewise its own ids; `pearl_usdt_price` owns `pearl_usdt`; `usdt_eur_price` owns `usdt_eur`; each Chia collector owns exactly its availability id and entity ids, all starting with `<slot>_`, so another machine's ids never match). Any of those topics it did not publish this run is stale.
+
+`MQTT_SWEEP` decides what happens: `dry` (default) prints each stale topic (`sweep dry: <topic>`) and a count to the journal; `apply` clears them; `off` skips. It runs once per start, and nothing published this run is ever cleared.
 
 When a collector's init is done:
 - `support/` collectors and `chia_farm_size`: after the first poll (all their states published).
 - `chia_harvester_processing_time`: after the first eligible-plots line in `debug.log` (time and plot count). It follows the log from the end, so until the harvester logs a signage point (about every 10 s while farming) it has published only discovery and availability, and it does not sweep.
 - `chia_recompute_server_processing_time`: after the first `took … ms` line in the `chia_recompute_server` journal. If the recompute server is idle, it does not sweep until work arrives.
 
-Every sweep-enabled collector, and `hwmon_drive_temperature.py`, also takes `--list`, `--purge` and `--help`, and then exits without starting its loop or opening its source (API connection, Chia RPC, log, drive). `--help` prints the flags it supports and exits 0; an unknown flag prints the usage and exits 2.
-- `--list` (read-only) prints its current entity config topics, its retired entity config topics, and every retained topic in its scope on the broker (marked `(retained)`).
-- `--purge` force-deletes all of them: an empty payload on each `config` (removes the entity and its history from HA, retained or not) and a cleared retained message on every retained topic in scope. It ignores `MQTT_SWEEP`. Stop the collector first, or its next publish recreates the entities.
+Every collector also takes `--list`, `--purge-stale`, `--purge` and `--help`, and then exits without starting its loop or opening its source (API connection, Chia RPC, log, drive). `--help` prints the flags it supports and exits 0; an unknown flag prints the usage and exits 2.
+- `--list` (read-only) prints its entity config topics and every retained topic in its scope on the broker, each labelled `[current]` (published now, including its availability) or `[stale]` (in its scope but not published now, e.g. a drive that is gone), plus `(retained)` when something is retained there. `--list --only current|stale` prints one group; the summary counts objects per group (`mqtt_purge_retained.py --script <path> --only stale` does the same).
+- `--purge-stale` deletes only the `[stale]` ones: an empty payload on each `config` (removes that entity and its history from HA, retained or not) and a cleared retained message on each retained topic. Current ids (config, state, availability) are never touched, so it is safe while the collector runs. `hwmon_drive_temperature.py` counts present drives as current and refuses while a present drive's id is unknown.
+- `--purge` deletes all of them, current ones included. It ignores `MQTT_SWEEP`. Stop the collector first, or its next publish recreates the entities.
 
 ```sh
-systemctl stop pearl_network
-python3 support/pearl_network.py --list
-python3 support/pearl_network.py --purge
+python3 support/pearl_network.py --list --only stale
+python3 support/pearl_network.py --purge-stale   # collector may keep running
 ```
 
 Run them from the repo directory so `.env` is found (`mqtt_purge_retained.py --script` does that for you).
 
 Deploy: `git pull`, `systemctl restart xmr_network xmr_eur_price pearl_network pearl_usdt_price usdt_eur_price` and, on Chia hosts, `systemctl restart chia_farm_size chia_harvester_processing_time chia_recompute_server_processing_time`. Check `journalctl -u <service>` for the `sweep dry:` lines, then set `MQTT_SWEEP=apply` in `.env` and restart them again if the list looks right. `MQTT_SWEEP` is per host `.env`, so each host is switched on separately.
 
+## Identity
+
+Two rules decide every host-collector id, and the HA entity id always equals the MQTT topic id, lowercased (`<platform>.<unique_id>`, set with `default_entity_id`; HA entity ids cannot hold uppercase, so this is the only difference; HA uses it only when it first registers an entity, needs 2025.10+):
+
+- **Fixed-name entities are keyed by slot**: `<slot>_<name>`, where `<slot>` is `MACHINE_ID` as written (area in Finnish + machine, `[A-Za-z0-9_]`, e.g. `Olohuone_PC1`; anything else is rejected at start), else the hostname as-is. Case is kept in topics, unique_ids and the device identifier; the device name shows underscores as spaces (`Olohuone PC1`); only the HA entity id is lowercase (`sensor.olohuone_pc1_cpu_package_power` for topic id `Olohuone_PC1_cpu_package_power`), because HA entity ids cannot hold uppercase. The entity means "whatever machine sits in that spot", so a CPU, GPU or motherboard swap continues the same history. Power tracking is always by slot: GPU power and energy are `<slot>_gpu<N>_power` / `<slot>_gpu<N>_energy` (index kept, also on single-GPU machines), on the machine device. Slot-keyed entities of a specific piece of hardware keep a generic id but carry the current hardware's model in their display name (`GeForce RTX 4080 Power`, `GeForce RTX 4080 (GPU 1) Power` with several GPUs, `AMD Ryzen 9 9950X 16-Core Processor Package Power`), so after a swap the name follows the new hardware and the history continues; a name you set in HA wins.
+- **Entities discovered from hardware are keyed by hardware identity**, with no slot, so different hardware never shares history. The prefix is added only where the existing id is not already a unique device identifier.
+- **Linked devices**: hardware that can move between machines (peripheral batteries, GPUs, drives) is its own HA device keyed by the hardware (no slot, no hostname), named by its model, with `via_device` = the machine it is in now. A GPU's health stats and a drive's temperature live on that device and follow the card / drive to another machine (GPU power and energy stay on the slot, above). Each of these collectors also puts one diagnostic count on the machine device (`<slot>_hwmon_drive_count` `Drive Count`, `<slot>_power_supply_battery_count` `Battery Count`), so it defines the `via_device` itself: Home Assistant stub-creates an unknown `via_device` without a name, shown as the MQTT entry title (the broker address).
+
+| collector | unique_id / topic id | key |
+|---|---|---|
+| `cpu_package_power.py` (+ Windows) | `<slot>_cpu_package_power`, `<slot>_cpu_package_power_energy` | slot |
+| `nvidia_gpu_power.py` (+ Windows) power, energy | `<slot>_gpu<N>_power`, `<slot>_gpu<N>_energy` on the machine device | slot |
+| `nvidia_gpu_power.py` (+ Windows) `NVIDIA_GPU_STATS` | `gpu_<uuid>_<model>_<metric>` (e.g. `gpu_8b1c…_RTX4080_temperature`, `<model>` = nvidia-smi name without `NVIDIA GeForce ` and spaces); device `gpu_<uuid>` | GPU (linked) |
+| `xmrig_status.py` (+ Windows) | `<slot>_xmrig_{hashrate,reject_ratio,mining,intensity,profitability_factor}` | slot |
+| `chia_*` | `<slot>_chia_{plots,farm_size,farm_effective,netspace,eta,harvester_processing_time,harvester_plots,recompute_server_processing_time}` | slot |
+| `loginctl_active_users.py`, `lightdm_active.py`, `ollama_active.py` | `<slot>_loginctl_active_users`, `<slot>_lightdm_active`, `<slot>_ollama_active` | slot |
+| `input_apm.py` | `<slot>_input_apm_{keyboard,mouse,total}` | slot |
+| `kmsg_reset_reason.py` | `<slot>_kmsg_reset_reason` | slot |
+| `etc_debian_version.py` | `<slot>_etc_debian_version` | slot |
+| `power_supply_battery.py` system battery | `<slot>_power_supply_<model>` | slot |
+| `power_supply_battery.py` peripheral | `power_supply_<model>_<serial_number>`, `power_supply_<model>` without one | device (linked) |
+| `hwmon_sensors.py` | `mb_<board>_hwmon_<chip>_<input>` | motherboard |
+| `windows/lhm_sensors.py` | `mb_<board>_lhm_<SensorId>` | motherboard |
+| `hwmon_drive_temperature.py` | `hwmon_drive_temperature_<drive id>` (case kept); device `drive_<drive id>` | drive (linked) |
+
+`<board>` is the DMI board serial (`/sys/class/dmi/id/board_serial`; on Windows `Win32_BaseBoard.SerialNumber`, one PowerShell query at start), else the system UUID (`product_uuid` / `Win32_ComputerSystemProduct.UUID`) when the serial is a placeholder (`Default string`, `To be filled by O.E.M.`, all one digit, …), else board vendor + name (then two identical boards would share ids). Chip-and-channel names (`nct6798 in3`) collide across boards, so they take the board prefix; that includes non-board chips hwmon/LHM report (`amdgpu`, DIMM sensors, LHM's per-index GPU sensors), which therefore follow the board, not the card. Display names keep the hardware model (`GeForce RTX 4080 Core Clock`). `support/` helpers and `grok_usage.py` have global ids. Host collectors share the HA device `linux_host_<slot>` / `windows_host_<slot>` (named `<slot>` with underscores as spaces, hostname as model when it differs); peripheral batteries, GPUs and drives are linked devices of their own (see above).
+
+Moving a machine: change `MACHINE_ID` and restart its collectors. The new spot's slot entities appear, with the history of whatever machine was there before. The old slot's entities stay unavailable; remove them in HA or with `mqtt_purge_retained.py --entity`. Hardware-keyed entities move with the hardware.
+
 ## Configuration
 
 `.env` in the working directory (or the environment). Empty means unset.
 
 ```
+MACHINE_ID=
+
 MQTT_HOST=localhost
 MQTT_PORT=1883
 MQTT_USER=
@@ -325,11 +370,13 @@ LHM_URL=
 
 | variable | meaning |
 |---|---|
+| **Machine** | |
+| `MACHINE_ID` | slot of this machine, area in Finnish + machine, `[A-Za-z0-9_]` (e.g. `Olohuone_PC1`, `Ulkovarasto_PC1`), case kept in ids; HA device named `Olohuone PC1`; empty uses the hostname as-is ([Identity](#identity)) |
 | **MQTT** | |
 | `MQTT_HOST`, `MQTT_PORT` | broker (default `localhost:1883`) |
 | `MQTT_USER`, `MQTT_PASS` | broker credentials, optional |
 | `MQTT_PREFIX` | discovery prefix (default `homeassistant`) |
-| `MQTT_SWEEP` | after init: stale retained-topic sweep and retired-entity removal; `dry` (default, print only), `apply` (clear and remove), `off` |
+| `MQTT_SWEEP` | after init: stale retained-topic sweep; `dry` (default, print only), `apply` (clear), `off` |
 | **XMRig** | |
 | `XMRIG_HOST`, `XMRIG_PORT` | XMRig HTTP API (default `127.0.0.1:44444`) |
 | `XMRIG_TOKEN` | XMRig HTTP bearer token, optional |
@@ -358,10 +405,10 @@ LHM_URL=
 
 ## Run
 
-As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`. Each collector has a matching `*.service` (`WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`); enable the ones you want as system units:
+As root, from `/root/mqtt-sensors`. Distro packages only: `python3` and `python3-paho-mqtt`. Each collector has a matching `systemd/<script>.service` (`WorkingDirectory=/root/mqtt-sensors`, `Restart=on-failure`, `RestartSec=10`, `WantedBy=default.target`); enable the ones you want as system units:
 
 ```
-systemctl enable --now /root/mqtt-sensors/xmrig_status.service
+systemctl enable --now /root/mqtt-sensors/systemd/xmrig_status.service
 ```
 
 Upgrading a host: `cd /root/mqtt-sensors && git pull`, add any new `.env` keys from the example above (`XMRIG_POWER_BASELINE_W`, `XMRIG_HASHRATE_PLATEAU_HS` and `XMRIG_CONTENTION_MODE` are read directly and must be present, empty is fine), then restart the enabled units, e.g. `systemctl restart xmrig_status lightdm_active`.

@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """Previous system reset reason (x86/amd, current boot) → MQTT + Home Assistant discovery, once (/dev/kmsg)."""
 import json, os, re
-from mqtt_common import get_hostname, get_mqtt_settings, make_device, create_client
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, handle_cli, slot_id, slot_lists
+)
 
-HOSTNAME = get_hostname()
-DEVICE, _ = make_device(HOSTNAME)
-CLIENT_ID = f"kmsg-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, _ = make_device()
+CLIENT_ID = f"kmsg-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/kmsg_reset_reason",)))
 
-OBJ = f"kmsg_reset_reason_{HOSTNAME}"
+OBJ = slot_id("kmsg_reset_reason")
 STATE = f"{PREFIX}/sensor/{OBJ}/state"
 ATTRS = f"{PREFIX}/sensor/{OBJ}/attributes"
 CONFIG = f"{PREFIX}/sensor/{OBJ}/config"
-DISCOVERY = {
-    "name": "Previous System Reset Reason",
-    "state_topic": STATE,
-    "json_attributes_topic": ATTRS,
-    "unique_id": OBJ,
-    "device": DEVICE,
-}
+DISCOVERY = make_sensor_discovery("Previous System Reset Reason", STATE, None, OBJ, DEVICE, json_attributes_topic=ATTRS)  # run-once: no availability
 
 def kmsg():
     fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
@@ -34,7 +31,7 @@ def kmsg():
 
 match = re.search(r"Previous system reset reason \[(0x[0-9a-fA-F]+)\]: (.*)", kmsg())
 code, reason = match.groups() if match else (None, "clean shutdown")
-print(f"kmsg_reset_reason: host={HOSTNAME} code={code} reason={reason}", flush=True)
+print(f"kmsg_reset_reason: machine={MACHINE_ID} code={code} reason={reason}", flush=True)
 
 client = create_client(CLIENT_ID, settings)
 client.connect(settings["host"], settings["port"], keepalive=60)
