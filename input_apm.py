@@ -3,16 +3,19 @@
 import json, os, select, signal, struct, time
 from collections import deque
 from pathlib import Path
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device, make_sensor_discovery, create_client
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client,
+    handle_cli, slot_id, slot_lists
 )
 
-HOSTNAME = get_hostname()
-DEVICE, _ = make_device(HOSTNAME)
-CLIENT_ID = f"input-apm-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, _ = make_device()
+CLIENT_ID = f"input-apm-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-AVAIL_T = f"{PREFIX}/sensor/input_apm_{HOSTNAME}/availability"
+APM = ("mouse", "keyboard", "total")
+handle_cli(CLIENT_ID, settings, **slot_lists(tuple(f"sensor/input_apm_{k}" for k in APM), availability=("input_apm",)))
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('input_apm')}/availability"
 EVENT = struct.Struct("llHHi")
 EV_KEY, KEY_A, BTN_LEFT, BTN_TASK = 1, 30, 0x110, 0x117
 
@@ -29,7 +32,7 @@ def has_key(event, bit):
 
 SENSORS = {}
 for k, title in (("mouse", "Mouse APM"), ("keyboard", "Keyboard APM"), ("total", "Total APM")):
-    unique = f"input_apm_{k}_{HOSTNAME}"
+    unique = slot_id(f"input_apm_{k}")
     state = f"{PREFIX}/sensor/{unique}/state"
     SENSORS[k] = (state, f"{PREFIX}/sensor/{unique}/config",
                   make_sensor_discovery(title, state, AVAIL_T, unique, DEVICE, "APM", None, "measurement"))

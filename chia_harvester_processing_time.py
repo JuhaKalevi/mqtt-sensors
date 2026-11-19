@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Chia harvester processing time + plots → MQTT + Home Assistant discovery (debug.log)."""
 import json, os, re, time
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device,
-    make_sensor_discovery, create_client, chia_root
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id,
+    slot_lists
 )
+from lib.chia_common import chia_root
 
-HOSTNAME = get_hostname()
-DEVICE, DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"chia-harvester-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, DEVICE_ID = make_device()
+CLIENT_ID = f"chia-harvester-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ_TIME = f"chia_harvester_processing_time_{HOSTNAME}"
-OBJ_PLOTS = f"chia_harvester_plots_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/chia_harvester_{HOSTNAME}/availability"
+OBJ_TIME = slot_id("chia_harvester_processing_time")
+OBJ_PLOTS = slot_id("chia_harvester_plots")
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('chia_harvester')}/availability"
+LISTS = slot_lists(("sensor/chia_harvester_processing_time", "sensor/chia_harvester_plots"), availability=("chia_harvester",))
 STATE_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/state"
 STATE_PLOTS = f"{PREFIX}/sensor/{OBJ_PLOTS}/state"
 CONFIG_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/config"
@@ -22,19 +24,9 @@ CONFIG_PLOTS = f"{PREFIX}/sensor/{OBJ_PLOTS}/config"
 
 DISCOVERY_TIME = make_sensor_discovery(
     "Chia Harvester Processing Time", STATE_TIME, AVAIL_T, OBJ_TIME, DEVICE,
-    unit="s", device_class="duration", state_class="measurement"
+    unit="s", device_class="duration", state_class="measurement", suggested_display_precision=1
 )
-DISCOVERY_TIME["suggested_display_precision"] = 1
-DISCOVERY_PLOTS = {
-    "name": "Chia Harvester Plots",
-    "state_topic": STATE_PLOTS,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "state_class": "measurement",
-    "unique_id": OBJ_PLOTS,
-    "device": DEVICE,
-}
+DISCOVERY_PLOTS = make_sensor_discovery("Chia Harvester Plots", STATE_PLOTS, AVAIL_T, OBJ_PLOTS, DEVICE, state_class="measurement")
 
 LINE = re.compile(r"plots were eligible for farming .* Time: ([\d.]+) s\. Total (\d+) plots")
 LOG = chia_root() / "log" / "debug.log"
@@ -52,7 +44,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_harvester_{HOSTNAME}", OBJ_TIME, OBJ_PLOTS), entities=(f"sensor/{OBJ_TIME}", f"sensor/{OBJ_PLOTS}"))
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, **LISTS)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()

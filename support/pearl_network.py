@@ -3,7 +3,7 @@
 import json, sys, time, http.client
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mqtt_common import get_hostname, get_mqtt_settings, create_client
+from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make_sensor_discovery
 
 HOSTNAME = get_hostname()
 DEVICE_ID = "pearl_network"
@@ -34,31 +34,14 @@ CONFIG_CUR = f"{PREFIX}/sensor/{OBJ_CUR}/config"
 CONFIG_REW = f"{PREFIX}/sensor/{OBJ_REW}/config"
 CONFIG_RATE = f"{PREFIX}/sensor/{OBJ_RATE}/config"
 
-def sensor(name, state, obj, unit=None):
-    d = {
-        "name": name,
-        "state_topic": state,
-        "availability_topic": AVAIL_T,
-        "payload_available": "online",
-        "payload_not_available": "offline",
-        "state_class": "measurement",
-        "unique_id": obj,
-        "device": DEVICE,
-    }
-    if unit is not None:
-        d["unit_of_measurement"] = unit
-    return d
+def sensor(name, state, obj, unit=None, **extra):
+    return make_sensor_discovery(name, state, AVAIL_T, obj, DEVICE, unit=unit, state_class="measurement", **extra)
 
 DISCOVERY_DIFF = sensor("Pearl Difficulty", STATE_DIFF, OBJ_DIFF)
-DISCOVERY_NOM = sensor("Pearl Nominal Block Time", STATE_NOM, OBJ_NOM, "s")
-DISCOVERY_NOM["suggested_display_precision"] = 0
-DISCOVERY_PER = sensor("Pearl Difficulty Period Block Time", STATE_PER, OBJ_PER, "s")
-DISCOVERY_PER["suggested_display_precision"] = 0
-DISCOVERY_CUR = sensor("Pearl Current Block Time", STATE_CUR, OBJ_CUR, "s")
-DISCOVERY_CUR["suggested_display_precision"] = 1
-DISCOVERY_CUR["json_attributes_topic"] = ATTRS_CUR
-DISCOVERY_REW = sensor("Pearl Block Reward", STATE_REW, OBJ_REW, "PEARL")
-DISCOVERY_REW["suggested_display_precision"] = 6
+DISCOVERY_NOM = sensor("Pearl Nominal Block Time", STATE_NOM, OBJ_NOM, "s", suggested_display_precision=0)
+DISCOVERY_PER = sensor("Pearl Difficulty Period Block Time", STATE_PER, OBJ_PER, "s", suggested_display_precision=0)
+DISCOVERY_CUR = sensor("Pearl Current Block Time", STATE_CUR, OBJ_CUR, "s", suggested_display_precision=1, json_attributes_topic=ATTRS_CUR)
+DISCOVERY_REW = sensor("Pearl Block Reward", STATE_REW, OBJ_REW, "PEARL", suggested_display_precision=6)
 DISCOVERY_RATE = sensor("Pearl PEARL per H/s per Day", STATE_RATE, OBJ_RATE, "PEARL/H/s/d")
 
 conn = http.client.HTTPSConnection("pearlchain.live", timeout=15)
@@ -91,7 +74,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_RATE, json.dumps(DISCOVERY_RATE))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=(DEVICE_ID, OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE), entities=tuple(f"sensor/{o}" for o in (OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE)), retired=("sensor/pearl_network_hashrate",))
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=(DEVICE_ID, OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE), entities=tuple(f"sensor/{o}" for o in (OBJ_DIFF, OBJ_NOM, OBJ_PER, OBJ_CUR, OBJ_REW, OBJ_RATE)))
 conn.connect()
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)

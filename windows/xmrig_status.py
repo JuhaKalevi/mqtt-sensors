@@ -8,16 +8,20 @@ from pathlib import Path
 from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_switch_discovery, make_number_discovery, create_client
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, make_switch_discovery, make_number_discovery,
+    create_client, handle_cli, slot_id, slot_lists
 )
-from xmrig_common import MiningIntensity, Contention
+from lib.xmrig_common import MiningIntensity, Contention
 
-HOSTNAME = get_hostname()
-DEVICE = {"identifiers": [f"windows_host_{HOSTNAME}"], "name": HOSTNAME}
-CLIENT_ID = f"xmrig-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, _ = make_device("windows")
+CLIENT_ID = f"xmrig-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+handle_cli(CLIENT_ID, settings, **slot_lists((
+    "sensor/xmrig_hashrate", "sensor/xmrig_reject_ratio", "switch/xmrig_mining", "number/xmrig_intensity", "sensor/xmrig_profitability_factor",
+), availability=("xmrig",)))
 XMRIG_HOST = os.getenv("XMRIG_HOST", "127.0.0.1")
 XMRIG_PORT = int(os.getenv("XMRIG_PORT", "44444"))
 XMRIG_TOKEN = os.getenv("XMRIG_TOKEN") or None
@@ -30,12 +34,12 @@ HA_SPOT_ENTITY = os.getenv("HA_ELECTRICITY_ENTITY", "sensor.porssisahko_electric
 HA_SPOT = HA_TOKEN is not None and SPOT_TOPIC is None and SPOT_FIXED is None
 PROFIT_WANTED = SPOT_TOPIC is not None or SPOT_FIXED is not None or HA_TOKEN is not None
 
-OBJ_HR = f"xmrig_hashrate_{HOSTNAME}"
-OBJ_REJ = f"xmrig_reject_ratio_{HOSTNAME}"
-OBJ_SW = f"xmrig_mining_{HOSTNAME}"
-OBJ_INT = f"xmrig_intensity_{HOSTNAME}"
-OBJ_PF = f"xmrig_profitability_factor_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/xmrig_{HOSTNAME}/availability"
+OBJ_HR = slot_id("xmrig_hashrate")
+OBJ_REJ = slot_id("xmrig_reject_ratio")
+OBJ_SW = slot_id("xmrig_mining")
+OBJ_INT = slot_id("xmrig_intensity")
+OBJ_PF = slot_id("xmrig_profitability_factor")
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('xmrig')}/availability"
 STATE_HR = f"{PREFIX}/sensor/{OBJ_HR}/state"
 STATE_REJ = f"{PREFIX}/sensor/{OBJ_REJ}/state"
 STATE_SW = f"{PREFIX}/switch/{OBJ_SW}/state"
@@ -48,33 +52,12 @@ CONFIG_REJ = f"{PREFIX}/sensor/{OBJ_REJ}/config"
 CONFIG_SW = f"{PREFIX}/switch/{OBJ_SW}/config"
 CONFIG_INT = f"{PREFIX}/number/{OBJ_INT}/config"
 CONFIG_PF = f"{PREFIX}/sensor/{OBJ_PF}/config"
-TOPIC_POWER = f"{PREFIX}/sensor/cpu_package_power_{HOSTNAME}/state"
+TOPIC_POWER = f"{PREFIX}/sensor/{slot_id('cpu_package_power')}/state"
 TOPIC_RATE = f"{PREFIX}/sensor/xmr_per_hs_day/state"
 TOPIC_EUR = f"{PREFIX}/sensor/xmr_eur_price/state"
 
-DISCOVERY_HR = {
-    "name": "XMRig Hashrate",
-    "state_topic": STATE_HR,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "unit_of_measurement": "H/s",
-    "state_class": "measurement",
-    "unique_id": OBJ_HR,
-    "device": DEVICE,
-    "suggested_display_precision": 0,
-}
-DISCOVERY_REJ = {
-    "name": "XMRig Reject Ratio",
-    "state_topic": STATE_REJ,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "unit_of_measurement": "%",
-    "state_class": "measurement",
-    "unique_id": OBJ_REJ,
-    "device": DEVICE,
-}
+DISCOVERY_HR = make_sensor_discovery("XMRig Hashrate", STATE_HR, AVAIL_T, OBJ_HR, DEVICE, unit="H/s", state_class="measurement", suggested_display_precision=0)
+DISCOVERY_REJ = make_sensor_discovery("XMRig Reject Ratio", STATE_REJ, AVAIL_T, OBJ_REJ, DEVICE, unit="%", state_class="measurement")
 DISCOVERY_SW = make_switch_discovery(
     "XMRig Mining", STATE_SW, CMD_SW, AVAIL_T, OBJ_SW, DEVICE
 )
@@ -82,17 +65,7 @@ DISCOVERY_INT = make_number_discovery(
     "XMRig Intensity", STATE_INT, CMD_INT, AVAIL_T, OBJ_INT, DEVICE,
     min_value=0, max_value=100, step=1, mode="slider", unit="%",
 )
-DISCOVERY_PF = {
-    "name": "XMRig Profitability Factor",
-    "state_topic": STATE_PF,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "state_class": "measurement",
-    "unique_id": OBJ_PF,
-    "device": DEVICE,
-    "suggested_display_precision": 3,
-}
+DISCOVERY_PF = make_sensor_discovery("XMRig Profitability Factor", STATE_PF, AVAIL_T, OBJ_PF, DEVICE, state_class="measurement", suggested_display_precision=3)
 
 last_hr = 0.0
 last_power = 0.0

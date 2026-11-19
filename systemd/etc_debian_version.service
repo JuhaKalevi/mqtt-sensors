@@ -1,0 +1,8 @@
+[Service]
+ExecStart=/root/mqtt-sensors/etc_debian_version.py
+WorkingDirectory=/root/mqtt-sensors
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

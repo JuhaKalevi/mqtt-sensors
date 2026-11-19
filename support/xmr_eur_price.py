@@ -3,7 +3,7 @@
 import json, sys, time, http.client
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mqtt_common import get_hostname, get_mqtt_settings, create_client
+from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make_sensor_discovery
 
 HOSTNAME = get_hostname()
 DEVICE_ID = "xmr_eur_price"
@@ -17,19 +17,8 @@ AVAIL_T = f"{PREFIX}/sensor/xmr_eur/availability"
 STATE = f"{PREFIX}/sensor/{OBJ}/state"
 CONFIG = f"{PREFIX}/sensor/{OBJ}/config"
 
-DISCOVERY = {
-    "name": "XMR/EUR Price",
-    "state_topic": STATE,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "unit_of_measurement": "EUR",
-    "device_class": "monetary",
-    "state_class": "measurement",
-    "unique_id": OBJ,
-    "device": DEVICE,
-}
-DISCOVERY["suggested_display_precision"] = 2
+DISCOVERY = make_sensor_discovery("XMR/EUR Price", STATE, AVAIL_T, OBJ, DEVICE, unit="EUR", device_class="monetary", state_class="measurement",
+                                  suggested_display_precision=2)
 
 conn = http.client.HTTPSConnection("api.kraken.com", timeout=15)
 

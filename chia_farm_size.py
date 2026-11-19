@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """Chia farm size → MQTT + Home Assistant discovery (farmer + full node RPC)."""
 import time, json, ssl, http.client
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device,
-    make_sensor_discovery, create_client, chia_root
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id,
+    slot_lists
 )
+from lib.chia_common import chia_root
 
-HOSTNAME = get_hostname()
-DEVICE, DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"chia-farm-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, DEVICE_ID = make_device()
+CLIENT_ID = f"chia-farm-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ_PLOTS = f"chia_plots_{HOSTNAME}"
-OBJ_SIZE = f"chia_farm_size_{HOSTNAME}"
-OBJ_EFF = f"chia_farm_effective_{HOSTNAME}"
-OBJ_NET = f"chia_netspace_{HOSTNAME}"
-OBJ_ETA = f"chia_eta_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/chia_farm_{HOSTNAME}/availability"
+OBJ_PLOTS = slot_id("chia_plots")
+OBJ_SIZE = slot_id("chia_farm_size")
+OBJ_EFF = slot_id("chia_farm_effective")
+OBJ_NET = slot_id("chia_netspace")
+OBJ_ETA = slot_id("chia_eta")
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('chia_farm')}/availability"
+LISTS = slot_lists(("sensor/chia_plots", "sensor/chia_farm_size", "sensor/chia_farm_effective", "sensor/chia_netspace", "sensor/chia_eta"), availability=("chia_farm",))
 
 STATE_PLOTS = f"{PREFIX}/sensor/{OBJ_PLOTS}/state"
 STATE_SIZE = f"{PREFIX}/sensor/{OBJ_SIZE}/state"
@@ -30,16 +32,7 @@ CONFIG_EFF = f"{PREFIX}/sensor/{OBJ_EFF}/config"
 CONFIG_NET = f"{PREFIX}/sensor/{OBJ_NET}/config"
 CONFIG_ETA = f"{PREFIX}/sensor/{OBJ_ETA}/config"
 
-DISCOVERY_PLOTS = {
-    "name": "Chia Plots",
-    "state_topic": STATE_PLOTS,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "state_class": "measurement",
-    "unique_id": OBJ_PLOTS,
-    "device": DEVICE,
-}
+DISCOVERY_PLOTS = make_sensor_discovery("Chia Plots", STATE_PLOTS, AVAIL_T, OBJ_PLOTS, DEVICE, state_class="measurement")
 DISCOVERY_SIZE = make_sensor_discovery(
     "Chia Farm Size", STATE_SIZE, AVAIL_T, OBJ_SIZE, DEVICE,
     unit="TiB", device_class="data_size", state_class="measurement"
@@ -97,7 +90,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_ETA, json.dumps(DISCOVERY_ETA))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, owned=(f"chia_farm_{HOSTNAME}", OBJ_PLOTS, OBJ_SIZE, OBJ_EFF, OBJ_NET, OBJ_ETA), entities=tuple(f"sensor/{o}" for o in (OBJ_PLOTS, OBJ_SIZE, OBJ_EFF, OBJ_NET, OBJ_ETA)))
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, **LISTS)
 client.on_connect = on_connect
 farmer = chia_conn("farmer", 8559)
 node = chia_conn("full_node", 8555)

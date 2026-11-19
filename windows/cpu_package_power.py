@@ -8,17 +8,18 @@ from pathlib import Path
 from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
-from mqtt_common import (
-    get_hostname, get_mqtt_settings,
-    make_power_discovery, make_energy_discovery, create_client
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_power_discovery, make_energy_discovery,
+    create_client, handle_cli, slot_id, slot_lists
 )
 
-HOSTNAME = get_hostname()
-DEVICE = {"identifiers": [f"windows_host_{HOSTNAME}"], "name": HOSTNAME}
-OBJECT = f"cpu_package_power_{HOSTNAME}"
-CLIENT_ID = f"cpu-power-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, _ = make_device("windows")
+OBJECT = slot_id("cpu_package_power")
+CLIENT_ID = f"cpu-power-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/cpu_package_power", "sensor/cpu_package_power_energy")))
 LHM = urlparse(os.environ["LHM_URL"])
 if LHM.scheme != "http" or not LHM.hostname or LHM.port is None:
     raise SystemExit("LHM_URL must be http://host:port")

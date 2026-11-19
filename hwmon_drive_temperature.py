@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Drive temperature (drivetemp + nvme hwmon, else in-process SAT SMART via SG_IO) → MQTT + Home Assistant discovery."""
-import ctypes, errno, fcntl, json, os, re, sys, time
+import ctypes, errno, fcntl, functools, json, os, sys, time
 from pathlib import Path
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device,
-    make_sensor_discovery, create_client, handle_cli
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_linked_device, make_sensor_discovery,
+    create_client, handle_cli, id_part, slot_id, linked_attributes, machine_count
 )
 
-HOSTNAME = get_hostname()
-DEVICE, DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"hwmon-drive-temperature-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, DEVICE_ID = make_device()
+CLIENT_ID = f"hwmon-drive-temperature-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 INTERVAL = float(os.getenv("DRIVE_TEMPERATURE_INTERVAL") or "60")
 DEBUG = os.getenv("DRIVE_TEMPERATURE_DEBUG") == "1"
-AVAIL_T = f"{PREFIX}/sensor/hwmon_drive_temperature_{HOSTNAME}/availability"
+DRIVE = "hwmon_drive_temperature_"
+AVAIL_OBJ = slot_id("hwmon_drive_temperature")
+AVAIL_T = f"{PREFIX}/sensor/{AVAIL_OBJ}/availability"
+COUNT = machine_count(PREFIX, AVAIL_T, "Drive Count", "hwmon_drive_count", DEVICE)
 ROOT = Path("/sys/class/hwmon")
 BLOCK = Path("/sys/block")
 DEV = "/dev"
@@ -24,6 +27,8 @@ drives = {}
 sat_drives = {}
 skipped = {}
 quirk_suggestions = set()
+links = {}  # drive object -> linked_machine in its attributes, as last seen on the broker
+warned = set()
 collecting_quirks = True
 
 class SgIoHdr(ctypes.Structure):
@@ -97,24 +102,58 @@ def identity(dev, model="", serial=""):
             ident = f"usb {read_opt(usb / 'idVendor')} {read_opt(usb / 'idProduct')} {usb_serial} {lun}"
     if not ident:
         return None
-    return model or "Drive", serial, re.sub(r"[^a-z0-9]+", "_", ident.lower()).strip("_"), usb is not None
+    return model or "Drive", serial, ident, usb is not None
 
 def entry(ids):
+    """A drive is a linked device keyed by its ident (case kept, no hostname), linked to this machine."""
     model, serial, ident, usb = ids
-    obj = f"hwmon_drive_temperature_{ident}_{HOSTNAME}"
+    obj = f"{DRIVE}{id_part(ident)}"
     state = f"{PREFIX}/sensor/{obj}/state"
-    name = f"{model} {serial}" if serial else model
-    name = f"{name} Temperature (USB)" if usb else f"{name} Temperature"
+    attrs = f"{PREFIX}/sensor/{obj}/attributes"
+    device = make_linked_device(f"drive_{id_part(ident)}", model, DEVICE_ID, model=model, serial_number=serial)
+    discovery = make_sensor_discovery(
+        "Temperature (USB)" if usb else "Temperature", state, AVAIL_T, obj, device,
+        unit="°C", device_class="temperature", state_class="measurement", json_attributes_topic=attrs
+    )
     return {
         "obj": obj,
         "label": f"{model} {serial}".strip(),
         "state": state,
+        "attrs": attrs,
         "config": f"{PREFIX}/sensor/{obj}/config",
-        "discovery": make_sensor_discovery(
-            name, state, AVAIL_T, obj, DEVICE,
-            unit="°C", device_class="temperature", state_class="measurement"
-        ),
+        "discovery": discovery,
     }
+
+def announce(d):
+    client.publish(d["config"], json.dumps(d["discovery"]))
+    # retained: the last machine a drive was linked to must survive restarts, so --purge-stale elsewhere never clears it
+    client.publish(d["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)
+
+def unlink(d):
+    """Remove a drive that left this machine from HA, unless it is already linked to another machine."""
+    other = links.get(d["obj"])
+    if other not in (None, MACHINE_ID):
+        log(f"{d['label']}: now linked to {other}, its entity is left alone")
+        return
+    client.publish(d["config"], "", retain=True)  # retained: clear stored message
+
+def on_attributes(client, userdata, msg):
+    obj = msg.topic.split("/")[-2]
+    if not obj.startswith(DRIVE) or not msg.payload:
+        return
+    try:
+        machine = json.loads(msg.payload).get("linked_machine")
+    except (ValueError, AttributeError):
+        return
+    links[obj] = machine
+    mine = {d["obj"] for d in drives.values()} | {s["obj"] for s in sat_drives.values() if "obj" in s}
+    if machine == MACHINE_ID or obj not in mine or (obj, machine) in warned:
+        return
+    warned.add((obj, machine))
+    if msg.retain:
+        log(f"{obj}: was last linked to {machine}, now linked here")
+    else:
+        log(f"{obj}: CONFLICT: machine {machine} publishes this drive too; one drive cannot be in two machines (duplicate serial, or a stale collector there)")
 
 def block_name(dev, fallback):
     try:
@@ -150,7 +189,7 @@ def drop_drive(name):
         d["fd"].close()
     except OSError:
         pass
-    client.publish(d["config"], "", retain=True)  # retained: clear stored message
+    unlink(d)
 
 def sync_drives():
     present = set()
@@ -165,7 +204,7 @@ def sync_drives():
         if not d:
             continue
         drives[hw.name] = d
-        client.publish(d["config"], json.dumps(d["discovery"]))
+        announce(d)
     for name in list(drives):
         if name not in present:
             drop_drive(name)
@@ -329,7 +368,7 @@ def setup_sat(s):
     if not ids:
         return "no stable serial, wwid or USB serial"
     s.update(entry(ids))
-    client.publish(s["config"], json.dumps(s["discovery"]))
+    announce(s)
     s["mode"] = "sat"
     log(f"{s['name']}: reading via SAT {op_name(s['op'])}, {s['label']}")
     return None
@@ -357,6 +396,7 @@ def poll_sat(s):
     _, t = read_smart(s, s["op"])
     if t is not None:
         client.publish(s["state"], "%.1f" % t, retain=True)  # retained: slow interval
+        client.publish(s["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)  # retained: last link (announce)
 
 def candidate(b):
     return read_opt(b / "removable") != "1" and read_opt(b / "size") not in ("", "0")
@@ -383,7 +423,7 @@ def drop_sat(name):
     if s["mode"] in ("probe", "standby", "sat"):
         os.close(s["fd"])
     if "config" in s and s["obj"] not in {d["obj"] for d in drives.values()}:
-        client.publish(s["config"], "", retain=True)  # retained: clear stored message
+        unlink(s)
 
 def sync_sat():
     covered = {d["dev"] for d in drives.values()}
@@ -408,43 +448,54 @@ def sync_sat():
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(f"{PREFIX}/status")
+        client.subscribe(f"{PREFIX}/sensor/+/attributes")
+        client.publish(COUNT["config"], json.dumps(COUNT["discovery"]))
         for d in list(drives.values()) + [s for s in sat_drives.values() if s["mode"] == "sat"]:
-            client.publish(d["config"], json.dumps(d["discovery"]))
+            announce(d)
         client.publish(AVAIL_T, "online")
 
-def present_drives():
-    keep, unknown = {}, []
+@functools.cache
+def scan_present():
+    """Drives present now, from sysfs only (no ATA/SCSI command, nothing opened under /dev): ([(entry, label)], [unknown])."""
+    found, unknown = [], []
     covered = set()
     for hw in sorted(ROOT.iterdir()):
         dev = (hw / "device").resolve()
         ids = identity(dev) if read_opt(hw / "name") in ("drivetemp", "nvme") else None
         if ids:
             covered.add(dev)
-            keep[entry(ids)["obj"]] = f"{hw.name} {block_name(dev, dev.name)}"
+            found.append((entry(ids), f"{hw.name} {block_name(dev, dev.name)}"))
     for b in sorted(BLOCK.glob("sd*")):
         dev = (b / "device").resolve()
         if dev in covered:
             continue
         ids = identity(dev)
         if ids:
-            keep[entry(ids)["obj"]] = b.name
+            found.append((entry(ids), b.name))
         if candidate(b) and len(read_bin(dev / "vpd_pg89")) < 572:
             unknown.append(f"{b.name}: no vpd_pg89, its object id comes from IDENTIFY")
-    return keep, unknown
+    return found, unknown
 
-AVAIL_OBJ = f"hwmon_drive_temperature_{HOSTNAME}"
+def present_drives():
+    found, unknown = scan_present()
+    return {e["obj"]: label for e, label in found}, unknown
+
+def in_scope(obj, linked=None):
+    """Drive objects this machine may clear: drives last linked to it (never one linked elsewhere or unknown)."""
+    return obj.startswith(DRIVE) and linked == MACHINE_ID
+
 handle_cli(
-    CLIENT_ID, settings, match=lambda obj: obj != AVAIL_OBJ and obj.startswith("hwmon_drive_temperature_") and obj.endswith(f"_{HOSTNAME}"),
-    present=present_drives,
+    CLIENT_ID, settings, entities=(f"sensor/{COUNT['obj']}",), owned=(AVAIL_OBJ,), match=in_scope, present=present_drives,
 )
 
 hwmons = [hw for hw in ROOT.iterdir() if read_opt(hw / "name") in ("drivetemp", "nvme")]
 disks = [b for b in BLOCK.glob("sd*") if candidate(b)]
-log(f"host={HOSTNAME} interval={INTERVAL:g}s drivetemp/nvme hwmon={len(hwmons)} scsi disks={len(disks)} debug={int(DEBUG)}")
+log(f"machine={MACHINE_ID} interval={INTERVAL:g}s drivetemp/nvme hwmon={len(hwmons)} scsi disks={len(disks)} debug={int(DEBUG)}")
 if not hwmons and not disks:
     sys.exit("hwmon_drive_temperature: no drivetemp or nvme hwmon and no SCSI disks; for SATA try: modprobe drivetemp")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
+client.message_callback_add(f"{PREFIX}/sensor/+/attributes", on_attributes)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -459,7 +510,9 @@ try:
             except (OSError, ValueError):
                 continue
             client.publish(d["state"], "%.1f" % (val / 1000.0), retain=True)  # retained: slow interval
+            client.publish(d["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)  # retained: last link (announce)
         sync_sat()
+        client.publish(COUNT["state"], str(len(drives) + sum(s["mode"] == "sat" for s in sat_drives.values())), retain=True)  # retained: slow interval
         if collecting_quirks:
             log_quirk_suggestions()
             collecting_quirks = False

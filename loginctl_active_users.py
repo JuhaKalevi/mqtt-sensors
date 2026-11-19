@@ -1,30 +1,25 @@
 #!/usr/bin/env python3
 """loginctl active users → MQTT + Home Assistant discovery (session_source())."""
 import json, time
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device, create_client, session_source
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, handle_cli, slot_id, slot_lists
 )
+from lib.system_common import session_source
 
-HOSTNAME = get_hostname()
-DEVICE, DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"loginctl-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, DEVICE_ID = make_device()
+CLIENT_ID = f"loginctl-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 
-OBJ = f"loginctl_active_users_{HOSTNAME}"
-AVAIL_T = f"{PREFIX}/sensor/loginctl_{HOSTNAME}/availability"
+handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/loginctl_active_users",), availability=("loginctl",)))
+
+OBJ = slot_id("loginctl_active_users")
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('loginctl')}/availability"
 STATE = f"{PREFIX}/sensor/{OBJ}/state"
 CONFIG = f"{PREFIX}/sensor/{OBJ}/config"
 
-DISCOVERY = {
-    "name": "Loginctl Active Users",
-    "state_topic": STATE,
-    "availability_topic": AVAIL_T,
-    "payload_available": "online",
-    "payload_not_available": "offline",
-    "unique_id": OBJ,
-    "device": DEVICE,
-}
+DISCOVERY = make_sensor_discovery("Loginctl Active Users", STATE, AVAIL_T, OBJ, DEVICE)
 
 SESSIONS = session_source()
 

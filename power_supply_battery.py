@@ -2,20 +2,20 @@
 """Power supply battery capacity → MQTT + Home Assistant discovery (sysfs)."""
 import json, time
 from pathlib import Path
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device,
-    make_sensor_discovery, create_client
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_linked_device, make_sensor_discovery, create_client, machine_count,
+    handle_cli, slot_id
 )
 
-HOSTNAME = get_hostname()
-HOST_DEVICE, HOST_DEVICE_ID = make_device(HOSTNAME)
-CLIENT_ID = f"power-supply-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+HOST_DEVICE, HOST_DEVICE_ID = make_device()
+CLIENT_ID = f"power-supply-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-AVAIL_T = f"{PREFIX}/sensor/power_supply_{HOSTNAME}/availability"
+AVAIL_T = f"{PREFIX}/sensor/{slot_id('power_supply')}/availability"
+COUNT = machine_count(PREFIX, AVAIL_T, "Battery Count", "power_supply_battery_count", HOST_DEVICE)
 ROOT = Path("/sys/class/power_supply")
 batteries = {}
-cleared = set()
 
 def read_opt(path):
     try:
@@ -41,26 +41,44 @@ def battery_key(d):
         return slug(model)
     return d.name
 
-def object_id(key):
-    return f"power_supply_{key}_{HOSTNAME}"
+def object_id(key, dirs, peripheral):
+    """System battery: slot-keyed. Peripheral: keyed by the device (model + first serial_number of the group), no slot, so it keeps its entity on any machine."""
+    if not peripheral:
+        return slot_id(f"power_supply_{key}")
+    serial = next((s for s in (read_opt(d / "serial_number") for d in dirs) if s), "")
+    return f"power_supply_{key}_{slug(serial)}" if serial else f"power_supply_{key}"
 
-def discovery_for(d, key, peripheral):
+def scan():
+    groups = {}
+    try:
+        entries = list(ROOT.iterdir())
+    except OSError:
+        entries = []
+    for d in entries:
+        if not d.is_dir() or read_opt(d / "type") != "Battery":
+            continue
+        if not (d / "capacity").exists():
+            continue
+        groups.setdefault(battery_key(d), []).append(d)
+    return groups
+
+def peripheral_of(dirs):
+    return any(read_opt(d / "scope") != "System" for d in dirs)
+
+handle_cli(
+    CLIENT_ID, settings, owned=(slot_id("power_supply"),),
+    entities=lambda: (f"sensor/{COUNT['obj']}",) + tuple(f"sensor/{object_id(k, dirs, peripheral_of(dirs))}" for k, dirs in scan().items()),
+)
+
+def discovery_for(d, key, peripheral, dirs):
     model = read_opt(d / "model_name")
     manufacturer = read_opt(d / "manufacturer")
     label = model or manufacturer or d.name.replace("_", " ")
-    obj = object_id(key)
+    obj = object_id(key, dirs, peripheral)
     state = f"{PREFIX}/sensor/{obj}/state"
     config = f"{PREFIX}/sensor/{obj}/config"
     if peripheral:
-        device = {
-            "identifiers": [obj],
-            "name": label,
-            "via_device": HOST_DEVICE_ID,
-        }
-        if manufacturer:
-            device["manufacturer"] = manufacturer
-        if model:
-            device["model"] = model
+        device = make_linked_device(obj, label, HOST_DEVICE_ID, manufacturer=manufacturer, model=model)
         name = "Battery"
     else:
         device = HOST_DEVICE
@@ -69,13 +87,6 @@ def discovery_for(d, key, peripheral):
         name, state, AVAIL_T, obj, device,
         unit="%", device_class="battery", state_class="measurement"
     )
-
-def clear_legacy(d, key):
-    legacy = f"power_supply_{d.name}_{HOSTNAME}"
-    if legacy == object_id(key) or legacy in cleared:
-        return
-    client.publish(f"{PREFIX}/sensor/{legacy}/config", "", retain=True)  # retained: clear stored message
-    cleared.add(legacy)
 
 def drop_battery(key):
     b = batteries.pop(key, None)
@@ -91,22 +102,10 @@ def choose(dirs):
     return sorted(dirs, key=lambda d: (read_opt(d / "scope") == "System", d.name))[0]
 
 def sync_batteries():
-    groups = {}
-    try:
-        entries = list(ROOT.iterdir())
-    except OSError:
-        entries = []
-    for d in entries:
-        if not d.is_dir() or read_opt(d / "type") != "Battery":
-            continue
-        if not (d / "capacity").exists():
-            continue
-        groups.setdefault(battery_key(d), []).append(d)
+    groups = scan()
     for key, dirs in groups.items():
-        peripheral = any(read_opt(d / "scope") != "System" for d in dirs)
+        peripheral = peripheral_of(dirs)
         picked = choose(dirs)
-        for d in dirs:
-            clear_legacy(d, key)
         b = batteries.get(key)
         if b and b["name"] not in {d.name for d in dirs}:
             try:
@@ -119,7 +118,8 @@ def sync_batteries():
             except OSError:
                 b["name"] = ""
         if b and b["peripheral"] != peripheral:
-            state, config, disc = discovery_for(picked, key, peripheral)
+            client.publish(b["config"], "", retain=True)  # retained: clear stored message
+            state, config, disc = discovery_for(picked, key, peripheral, dirs)
             b["peripheral"] = peripheral
             b["state"] = state
             b["config"] = config
@@ -131,7 +131,7 @@ def sync_batteries():
             fd = open(picked / "capacity")
         except OSError:
             continue
-        state, config, disc = discovery_for(picked, key, peripheral)
+        state, config, disc = discovery_for(picked, key, peripheral, dirs)
         batteries[key] = {
             "name": picked.name,
             "fd": fd,
@@ -148,6 +148,7 @@ def sync_batteries():
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(f"{PREFIX}/status")
+        client.publish(COUNT["config"], json.dumps(COUNT["discovery"]))
         for b in batteries.values():
             client.publish(b["config"], json.dumps(b["discovery"]))
         client.publish(AVAIL_T, "online")
@@ -160,6 +161,7 @@ client.loop_start()
 try:
     while True:
         sync_batteries()
+        client.publish(COUNT["state"], str(len(batteries)))
         for key in list(batteries):
             b = batteries.get(key)
             if not b:

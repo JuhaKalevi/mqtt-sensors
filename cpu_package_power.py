@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """CPU package power + energy → MQTT + Home Assistant discovery (RAPL/powercap)."""
-import time, glob, os, re, json
-from mqtt_common import (
-    get_hostname, get_mqtt_settings, make_device,
-    make_power_discovery, make_energy_discovery, create_client
+import time, glob, re, json
+from lib.mqtt_common import (
+    get_machine_id, get_mqtt_settings, make_device, make_power_discovery, make_energy_discovery,
+    create_client, handle_cli, slot_id, slot_lists
 )
 
-HOSTNAME = get_hostname()
-DEVICE, DEVICE_ID = make_device(HOSTNAME)
-OBJECT = f"cpu_package_power_{HOSTNAME}"
-CLIENT_ID = f"cpu-power-{HOSTNAME}"
+MACHINE_ID = get_machine_id()
+DEVICE, DEVICE_ID = make_device()
+OBJECT = slot_id("cpu_package_power")
+CLIENT_ID = f"cpu-power-{MACHINE_ID}"
 
 def get_cpu_model():
     try:
@@ -26,6 +26,7 @@ def get_cpu_model():
 CPU_MODEL = get_cpu_model()
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
+handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/cpu_package_power", "sensor/cpu_package_power_energy")))
 
 STATE_POWER = f"{PREFIX}/sensor/{OBJECT}/state"
 STATE_ENERGY = f"{PREFIX}/sensor/{OBJECT}_energy/state"
