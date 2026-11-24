@@ -30,6 +30,10 @@ Collectors on a host share one HA device `linux_host_<slot>`, named `<slot>` wit
 | `hwmon_sensors.py` | every hwmon temperature (°C), fan (RPM) and voltage (V) | held `/sys/class/hwmon` fds, 5 s |
 | `input_apm.py` | mouse, keyboard and total actions per minute | `/dev/input/event*`, 5 s |
 | `kmsg_reset_reason.py` | previous system reset reason (text, hex `code` attribute), once per boot | `/dev/kmsg` |
+| `interrupts_rate.py` | total and max-per-CPU interrupt rate (irq/s), LOC/RES/CAL/TLB/IWI; top device sources as attributes | `/proc/interrupts`, 1 s |
+| `psi_stall.py` | CPU/memory/I/O some and memory/I/O full stall (% of last second); avg10 as attributes | `/proc/pressure`, 1 s |
+| `collector_cost.py` | all collectors' CPU (%) and voluntary/nonvoluntary context-switch rates; per-collector breakdown as attributes | `/proc/<pid>/stat` + `status`, 1 s |
+| `nvidia_xid.py` | NVIDIA Xid error count (current boot), `last_xid` and `last_source` as attributes | `/dev/kmsg` |
 | `etc_debian_version.py` | contents of `/etc/debian_version` (text), on change | inotify on `/etc` |
 | `xmrig_status.py` | hashrate (H/s, 60 s), reject ratio (%), mining switch, intensity slider (0–100%), profitability factor | XMRig HTTP + MQTT inputs |
 | `wildrig_status.py` | mining switch; per GPU: enable switch, intensity slider (0 = miner's automatic, 1–31), hashrate, reject ratio (%), Pearl profitability factor | WildRig Multi HTTP + MQTT inputs, `nvidia-smi` once at start |
@@ -46,7 +50,7 @@ Run only the collectors that apply. Energy is `total_increasing` kWh integrated 
 - **Batteries:** any sysfs node with `type=Battery` and `capacity` (Logitech `hidpp_battery_*`, laptop `BAT*`). Rescanned each second; when a node disappears its entity is removed (empty retained config). `scope=System` stays on the host device; others get their own device. Nodes with the same `model_name` are one battery, so a mouse plugged in by cable does not add an entity.
 - **`support/`:** helpers that are not host metrics (global object ids, no slot or hostname). Expected XMR/day ≈ local hashrate × XMR/H/s/day (`reward * 86400 / difficulty`). Expected PEARL/day ≈ miner-reported hashrate × PEARL/H/s/day (`reward * 86400 / (difficulty * 2^64 / 65535)`; Pearl "H/s" counts multiply-accumulates, so the miner's TH/s and the network hashrate share a unit). Each coin publishes three block times (s): **nominal** (the fixed coin parameter), **difficulty-period** (what the current difficulty is set for; equals nominal unless a DAA change cap was hit; Pearl and Monero have no such cap), and **current** (a loose recent average; window in `window_secs`/`window_blocks` attributes). Network hashrate is not published; implied current hashrate is work per block / current block time (or target hashrate × nominal / current) and can be derived in HA if needed. Data fetched from the internet (network stats, prices) lives in `support/`; values a local node reports directly (Chia netspace from the farmer's own full node) stay on the host device. Market devices are real exchange-traded pairs only (`XMR/EUR`, `PEARL/USDT`, `USDT/EUR`), one device per pair with a generic `Price` (avg, max or min of its per-source `<Source> Price` entities, per `<BASE>_<QUOTE>_PRICE_MODE`); a fiat value multiplies real steps (PEARL/USDT × USDT/EUR), each discounted by its own `slippage_pct` attribute (set per pair in `.env`); each coin's network stats are one device (`Monero`, `Pearl`).
 
-Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. `<object>` is the unique_id, and the HA entity id is `<platform>.<object>` (`default_entity_id`). Host collectors' availability is under `sensor/<slot>_<name>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `lightdm`, `ollama`, `power_supply`, `hwmon_sensors`, `input_apm`, `xmrig`, `wildrig`, `lhm_sensors`, `hwmon_drive_temperature` (`cpu_package_power` and `etc_debian_version` use their entity's object; `kmsg_reset_reason` has none). `support/` helpers use `sensor/<name>/availability` (`xmr_eur`, `xmr_network`, `pearl_usdt`, `usdt_eur`, `pearl_network`), and `grok` uses `sensor/grok/availability`.
+Topics: `$MQTT_PREFIX/{sensor,binary_sensor,switch,number}/<object>/…` with `config`, `state` and, for switches and numbers, `set`. `<object>` is the unique_id, and the HA entity id is `<platform>.<object>` (`default_entity_id`). Host collectors' availability is under `sensor/<slot>_<name>/availability`: `gpu_power`, `chia_farm`, `chia_recompute_server`, `chia_harvester`, `loginctl`, `lightdm`, `ollama`, `power_supply`, `hwmon_sensors`, `input_apm`, `xmrig`, `wildrig`, `lhm_sensors`, `hwmon_drive_temperature`, `interrupts`, `psi`, `collector_cost` (`cpu_package_power`, `etc_debian_version` and `nvidia_xid` use their entity's object; `kmsg_reset_reason` has none). `support/` helpers use `sensor/<name>/availability` (`xmr_eur`, `xmr_network`, `pearl_usdt`, `usdt_eur`, `pearl_network`), and `grok` uses `sensor/grok/availability`.
 
 ## XMRig
 
@@ -192,7 +196,28 @@ For OpenRC, runit, s6 or another init, write a class with the same methods and r
 
 `hwmon_sensors.py` publishes every hwmon temperature (°C), fan (RPM) and voltage (V) every 5 s from held sysfs fds (only CPU and GPU temperatures stay on the device page: `k10temp`, `coretemp`, `zenpower`, `amdgpu`, `radeon`, `i915`, `xe`; every other temperature, fan and voltage is a diagnostic entity, under Diagnostic. `windows/lhm_sensors.py` does the same: only the temperatures of LHM `amdcpu`/`intelcpu`/`gpu-*` hardware stay, and fans, voltages, clocks, loads and controls go to Diagnostic): CPU (`k10temp` Tctl/Tccd, `coretemp`), the board Super-I/O chip (whatever driver is loaded: `nct6775`, `nct6687`, `it87`, …), `amdgpu`, and so on. Drives (`drivetemp`, `nvme`) are left to the drive temperature collector; `nouveau` is skipped. No subprocess. Names are `<chip> <label> <kind>`; unique_id `mb_<board>_hwmon_<chip>_<input>` ([Identity](#identity)). Hide unwired fan headers or bogus voltages with `HWMON_SENSORS_EXCLUDE=nct6798/fan5,nct6798/in7` (`chip/label`; the label is the kernel `_label`, else the input name). Labels are what the sensor names show, so the list reads like the HA names.
 
-`NVIDIA_GPU_STATS=1` extends `nvidia_gpu_power.py` with GPU temperature, memory temperature, fan %, core/memory clock, utilization, memory bandwidth, memory used %, power limit, pstate and throttle reasons, all from the same `nvidia-smi --loop=1`. Empty keeps power + energy only. Fields the GPU reports as `[N/A]` get no entity.
+`NVIDIA_GPU_STATS=1` extends `nvidia_gpu_power.py` with GPU temperature, fan %, core/memory clock, utilization, memory bandwidth, memory used %, power limit, pstate and throttle reasons, plus the stall signals: PCIe link (`gen`×`width` from `pcie.link.gen.gpucurrent` and `pcie.link.width.current`, those also as attributes) and throttle slowdown (`1` if any of `clocks_event_reasons.` `hw_slowdown`, `hw_thermal_slowdown`, `hw_power_brake_slowdown`, `sw_thermal_slowdown` is `Active`; flags and `changes` as attributes), all diagnostic. nvidia-smi has no PCIe replay counter in `--query-gpu`. Query fields are the names `nvidia-smi --help-query-gpu` lists; one unknown name makes nvidia-smi reject the whole query, and the collector then exits with nvidia-smi's message and exit code. A `near_full` attribute on the existing memory used % entity (`1` at ≥ 90%) is not a new entity and does not change that sensor's category. All from the same `nvidia-smi --loop=1` (one plain query at start for the GPU count; the stream ending exits non-zero so systemd restarts it). Empty keeps power + energy only. Fields the GPU reports as `[N/A]` / `[Not Supported]` get no entity.
+
+## Microstutter
+
+1 s collectors meant for hunting short hitches, including whether any of these sensors is itself too heavy. All of these entities, and the GPU stall signals below, are diagnostic (`entity_category: diagnostic`), so they sit under Diagnostic and stay off the autopopulated area views. Home Assistant writes an entity's category to its registry only when it adds the entity, so a category changed on an existing entity shows after you delete its device in HA (the collector republishes it), reload the MQTT integration, or restart HA.
+
+`interrupts_rate.py` holds `/proc/interrupts` open and publishes total interrupt rate, the busiest CPU's rate (with that CPU as an attribute), and the summed rates of the local timer and interprocessor lines LOC, RES, CAL, TLB and IWI. The top device IRQ sources, grouped by name (`nvidia`, `nvme0`, `xhci_hcd`, a NIC, …), are attributes on the total, not extra entities. A CPU appearing or disappearing, or a counter that goes backwards, is omitted from that interval so it is not published as a spike.
+
+`psi_stall.py` holds `/proc/pressure/{cpu,memory,io}` and publishes the share of each second spent stalled, from the `total` microsecond counters: `some` for all three, plus `full` for memory and I/O. That interval fraction moves on a short hitch; `avg10` is a 10 s average that often stays at 0.00, so it is kept only as an attribute. If `/proc/pressure` is missing (no `CONFIG_PSI`), the process exits.
+
+`collector_cost.py` finds this repo's collector processes by cmdline (script names at the repo root and under `support/`; the process must be Python or the script itself) and publishes their combined CPU % and voluntary / nonvoluntary context-switch rates, including itself. Per-collector CPU % and switch rates are attributes on the CPU entity, with `max` naming the heaviest. A 1 Hz collector should stay at a few wakeups per second and a fraction of a percent of CPU.
+
+`nvidia_xid.py` holds `/dev/kmsg` and counts `NVRM: Xid (...) : <code>` lines from the current boot ring buffer, then any new ones. State is a `total_increasing` count; `last_xid` (the numeric code) and `last_source` (the PCI/id text in parentheses) are attributes. It is not folded into `kmsg_reset_reason.py`, which is run-once and exits. There is no Windows Xid watcher (`/dev/kmsg` is Linux-only). Other GPU compute/graphics process counts are not published: `--query-compute-apps` would need a second `nvidia-smi` process, and scanning `/proc` for `/dev/nvidia*` fds always includes the display server.
+
+Enable the ones you want:
+
+```
+systemctl enable --now /root/mqtt-sensors/systemd/interrupts_rate.service
+systemctl enable --now /root/mqtt-sensors/systemd/psi_stall.service
+systemctl enable --now /root/mqtt-sensors/systemd/collector_cost.service
+systemctl enable --now /root/mqtt-sensors/systemd/nvidia_xid.service
+```
 
 ## Drive temperature
 
@@ -322,6 +347,10 @@ Two rules decide every host-collector id, and the HA entity id always equals the
 | `loginctl_active_users.py`, `lightdm_active.py`, `ollama_active.py` | `<slot>_loginctl_active_users`, `<slot>_lightdm_active`, `<slot>_ollama_active` | slot |
 | `input_apm.py` | `<slot>_input_apm_{keyboard,mouse,total}` | slot |
 | `kmsg_reset_reason.py` | `<slot>_kmsg_reset_reason` | slot |
+| `interrupts_rate.py` | `<slot>_interrupts_{total,max_cpu,loc,res,cal,tlb,iwi}` | slot |
+| `psi_stall.py` | `<slot>_psi_{cpu_some,memory_some,memory_full,io_some,io_full}` | slot |
+| `collector_cost.py` | `<slot>_collector_cost_{cpu,voluntary,nonvoluntary}` | slot |
+| `nvidia_xid.py` | `<slot>_nvidia_xid` | slot |
 | `etc_debian_version.py` | `<slot>_etc_debian_version` | slot |
 | `power_supply_battery.py` system battery | `<slot>_power_supply_<model>` | slot |
 | `power_supply_battery.py` peripheral | `power_supply_<model>_<serial_number>`, `power_supply_<model>` without one | device (linked) |

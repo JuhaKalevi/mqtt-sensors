@@ -20,7 +20,7 @@ Upgrading: `git pull`, add any new `.env` keys from the root example, then quit 
 
 ## GPU
 
-`nvidia_gpu_power.py` runs the same `nvidia-smi --query-gpu=… --format=csv,noheader,nounits --loop=1` as Linux (same fields), without `select()` (no Windows pipe support). A one-shot query counts GPUs. Needs the NVIDIA driver and `nvidia-smi` on `PATH`.
+`nvidia_gpu_power.py` runs the same `nvidia-smi --query-gpu=… --format=csv,noheader,nounits --loop=1` as Linux (same fields, including the `NVIDIA_GPU_STATS` stall signals: PCIe link and throttle slowdown (diagnostic), VRAM `near_full` attribute). A one-shot query counts GPUs, and its nvidia-smi message and exit code are in the error when it returns no rows. Needs the NVIDIA driver and `nvidia-smi` on `PATH`. There is no Windows Xid collector.
 
 ## Hardware sensors
 
