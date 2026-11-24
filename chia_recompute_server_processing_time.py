@@ -2,8 +2,7 @@
 """Chia recompute server processing time → MQTT + Home Assistant discovery (service_manager().follow_log)."""
 import json, re
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id,
-    slot_lists
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id
 )
 from lib.system_common import service_manager
 
@@ -17,7 +16,6 @@ PREFIX = settings["prefix"]
 
 OBJ_TIME = slot_id("chia_recompute_server_processing_time")
 AVAIL_T = f"{PREFIX}/sensor/{slot_id('chia_recompute_server')}/availability"
-LISTS = slot_lists(("sensor/chia_recompute_server_processing_time",), availability=("chia_recompute_server",))
 
 STATE_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/state"
 CONFIG_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/config"
@@ -35,7 +33,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_TIME, json.dumps(DISCOVERY_TIME))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, **LISTS)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -47,7 +45,6 @@ with SERVICES.follow_log(SERVICE) as lines:
             if not m:
                 continue
             client.publish(STATE_TIME, format(float(m.group(1)) / 1000.0, ".15g"))
-            client.init_done()
     except KeyboardInterrupt:
         pass
     finally:

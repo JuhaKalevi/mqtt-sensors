@@ -3,8 +3,7 @@
 import json, time
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, create_client,
-    make_switch_discovery, switch_mode, make_switch_on_message, handle_cli, slot_id,
-    slot_lists
+    make_switch_discovery, switch_mode, make_switch_on_message, slot_id
 )
 from lib.system_common import service_manager
 
@@ -14,7 +13,6 @@ DEVICE, DEVICE_ID = make_device()
 CLIENT_ID = f"lightdm-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-handle_cli(CLIENT_ID, settings, **slot_lists(("switch/lightdm_active",), availability=("lightdm",)))
 SERVICES = service_manager()
 MODE = switch_mode("LIGHTDM_SWITCH_MODE")
 

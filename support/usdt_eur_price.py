@@ -42,8 +42,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             client.publish(f"{PREFIX}/sensor/{obj}/config", json.dumps(sensor(name, obj)))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True, owned=("usdt_eur",), entities=(f"sensor/{OBJ}",) + tuple(f"sensor/usdt_eur_{src}_price" for src in SOURCES))
-# After create_client, so --help/--list/--purge/--claim work without these settings.
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, replay_states=True)
 SLIPPAGE_PCT = float(os.environ["USDT_EUR_SLIPPAGE_PCT"])
 MODES = {"avg": lambda v: sum(v) / len(v), "max": max, "min": min}
 MODE = os.getenv("USDT_EUR_PRICE_MODE") or "avg"
@@ -63,7 +62,6 @@ try:
             client.publish(f"{PREFIX}/sensor/usdt_eur_{src}_price/state", format(price, ".15g"))
         client.publish(f"{PREFIX}/sensor/{OBJ}/state", format(MODES[MODE](prices), ".15g"))
         client.publish(ATTRS, json.dumps({"mode": MODE, "slippage_pct": SLIPPAGE_PCT}))
-        client.init_done()
         time.sleep(60.0)
 except KeyboardInterrupt:
     pass

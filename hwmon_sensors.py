@@ -4,7 +4,7 @@ import json, os, re, signal, time
 from pathlib import Path
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client,
-    handle_cli, slot_id
+    slot_id
 )
 from lib.board_common import dmi_board_id
 
@@ -56,11 +56,6 @@ def name_of(chip, inp):
 def unique_of(chip, inp):
     """Motherboard-keyed: chip-and-channel names collide across machines, so the board id goes in front."""
     return f"mb_{BOARD}_{name_of(chip, inp)}"
-
-handle_cli(
-    CLIENT_ID, settings, owned=(slot_id("hwmon_sensors"),),
-    entities=lambda: tuple(f"sensor/{unique_of(c, i)}" for c, i, *_ in inputs()),
-)
 
 EXCLUDE = {x.strip() for x in os.environ["HWMON_SENSORS_EXCLUDE"].split(",") if x.strip()}
 sensors = []

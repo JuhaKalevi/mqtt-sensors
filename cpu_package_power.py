@@ -3,7 +3,7 @@
 import time, glob, re, json
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, make_power_discovery, make_energy_discovery,
-    create_client, handle_cli, slot_id, slot_lists
+    create_client, slot_id
 )
 
 MACHINE_ID = get_machine_id()
@@ -26,7 +26,6 @@ def get_cpu_model():
 CPU_MODEL = get_cpu_model()
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/cpu_package_power", "sensor/cpu_package_power_energy")))
 
 STATE_POWER = f"{PREFIX}/sensor/{OBJECT}/state"
 STATE_ENERGY = f"{PREFIX}/sensor/{OBJECT}_energy/state"

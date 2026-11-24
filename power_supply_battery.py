@@ -4,7 +4,7 @@ import json, time
 from pathlib import Path
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, make_linked_device, make_sensor_discovery, create_client, machine_count,
-    handle_cli, slot_id
+    slot_id
 )
 
 MACHINE_ID = get_machine_id()
@@ -64,11 +64,6 @@ def scan():
 
 def peripheral_of(dirs):
     return any(read_opt(d / "scope") != "System" for d in dirs)
-
-handle_cli(
-    CLIENT_ID, settings, owned=(slot_id("power_supply"),),
-    entities=lambda: (f"sensor/{COUNT['obj']}",) + tuple(f"sensor/{object_id(k, dirs, peripheral_of(dirs))}" for k, dirs in scan().items()),
-)
 
 def discovery_for(d, key, peripheral, dirs):
     model = read_opt(d / "model_name")

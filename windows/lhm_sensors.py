@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.chdir(Path(__file__).resolve().parents[1])
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client,
-    handle_cli, slot_id
+    slot_id
 )
 from lib.board_common import pick_board_id
 
@@ -86,7 +86,7 @@ def walk(node, hardware, out):
 
 @functools.cache
 def lhm_conn():
-    """LHM_URL is read here, not at import, so --help works without it (--list/--purge/--claim need it)."""
+    """LHM_URL is read here, not at import."""
     lhm = urlparse(os.environ["LHM_URL"])
     if lhm.scheme != "http" or not lhm.hostname or lhm.port is None:
         raise SystemExit("LHM_URL must be http://host:port")
@@ -101,10 +101,6 @@ def read_all():
         raise SystemExit(f"LibreHardwareMonitor HTTP {resp.status}")
     return walk(json.loads(body), "", [])
 
-handle_cli(
-    CLIENT_ID, settings, owned=(slot_id("lhm_sensors"),),
-    entities=lambda: tuple(f"sensor/{unique_of(sid)}" for sid, *_ in read_all()),
-)
 conn = lhm_conn()
 conn.connect()
 sensors = {}

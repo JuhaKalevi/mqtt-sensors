@@ -2,7 +2,7 @@
 """/etc/debian_version → MQTT + Home Assistant discovery, published when its contents change (inotify on /etc)."""
 import ctypes, json, os, struct
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, handle_cli, slot_id
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id
 )
 
 MACHINE_ID = get_machine_id()
@@ -11,7 +11,6 @@ CLIENT_ID = f"etc-debian-version-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
 OBJ = slot_id("etc_debian_version")
-handle_cli(CLIENT_ID, settings, entities=(f"sensor/{OBJ}",), owned=(OBJ,))
 
 AVAIL_T = f"{PREFIX}/sensor/{OBJ}/availability"
 STATE = f"{PREFIX}/sensor/{OBJ}/state"

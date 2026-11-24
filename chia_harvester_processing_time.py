@@ -2,8 +2,7 @@
 """Chia harvester processing time + plots → MQTT + Home Assistant discovery (debug.log)."""
 import json, os, re, time
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id,
-    slot_lists
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id
 )
 from lib.chia_common import chia_root
 
@@ -16,7 +15,6 @@ PREFIX = settings["prefix"]
 OBJ_TIME = slot_id("chia_harvester_processing_time")
 OBJ_PLOTS = slot_id("chia_harvester_plots")
 AVAIL_T = f"{PREFIX}/sensor/{slot_id('chia_harvester')}/availability"
-LISTS = slot_lists(("sensor/chia_harvester_processing_time", "sensor/chia_harvester_plots"), availability=("chia_harvester",))
 STATE_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/state"
 STATE_PLOTS = f"{PREFIX}/sensor/{OBJ_PLOTS}/state"
 CONFIG_TIME = f"{PREFIX}/sensor/{OBJ_TIME}/config"
@@ -44,7 +42,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_PLOTS, json.dumps(DISCOVERY_PLOTS))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, **LISTS)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -58,7 +56,6 @@ try:
             if m:
                 client.publish(STATE_TIME, format(float(m.group(1)), ".15g"))
                 client.publish(STATE_PLOTS, m.group(2))
-                client.init_done()
             continue
         try:
             cur = os.stat(LOG).st_ino

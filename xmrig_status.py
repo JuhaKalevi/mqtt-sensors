@@ -4,7 +4,7 @@ import json, os, time, http.client
 from urllib.parse import urlparse
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, make_switch_discovery, make_number_discovery,
-    create_client, handle_cli, slot_id, slot_lists
+    create_client, slot_id
 )
 from lib.xmrig_common import MiningIntensity, Contention
 
@@ -13,9 +13,6 @@ DEVICE, DEVICE_ID = make_device()
 CLIENT_ID = f"xmrig-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-handle_cli(CLIENT_ID, settings, **slot_lists((
-    "sensor/xmrig_hashrate", "sensor/xmrig_reject_ratio", "switch/xmrig_mining", "number/xmrig_intensity", "sensor/xmrig_profitability_factor",
-), availability=("xmrig",)))
 XMRIG_HOST = os.getenv("XMRIG_HOST", "127.0.0.1")
 XMRIG_PORT = int(os.getenv("XMRIG_PORT", "44444"))
 XMRIG_TOKEN = os.getenv("XMRIG_TOKEN") or None

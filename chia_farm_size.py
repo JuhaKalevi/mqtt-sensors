@@ -2,8 +2,7 @@
 """Chia farm size → MQTT + Home Assistant discovery (farmer + full node RPC)."""
 import time, json, ssl, http.client
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id,
-    slot_lists
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id
 )
 from lib.chia_common import chia_root
 
@@ -19,7 +18,6 @@ OBJ_EFF = slot_id("chia_farm_effective")
 OBJ_NET = slot_id("chia_netspace")
 OBJ_ETA = slot_id("chia_eta")
 AVAIL_T = f"{PREFIX}/sensor/{slot_id('chia_farm')}/availability"
-LISTS = slot_lists(("sensor/chia_plots", "sensor/chia_farm_size", "sensor/chia_farm_effective", "sensor/chia_netspace", "sensor/chia_eta"), availability=("chia_farm",))
 
 STATE_PLOTS = f"{PREFIX}/sensor/{OBJ_PLOTS}/state"
 STATE_SIZE = f"{PREFIX}/sensor/{OBJ_SIZE}/state"
@@ -90,7 +88,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         client.publish(CONFIG_ETA, json.dumps(DISCOVERY_ETA))
         client.publish(AVAIL_T, "online")
 
-client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T, **LISTS)
+client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
 client.on_connect = on_connect
 farmer = chia_conn("farmer", 8559)
 node = chia_conn("full_node", 8555)
@@ -105,7 +103,6 @@ try:
         client.publish(STATE_EFF, f"{effective:.3f}")
         client.publish(STATE_NET, f"{netspace:.3f}")
         client.publish(STATE_ETA, f"{eta:.0f}")
-        client.init_done()
         time.sleep(1.0)
 except KeyboardInterrupt:
     pass
