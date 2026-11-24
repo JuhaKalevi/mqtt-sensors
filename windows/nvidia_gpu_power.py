@@ -11,7 +11,9 @@ from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device,
     create_client, slot_id
 )
-from lib.nvidia_common import clean_gpu_name, gpu_entities
+from lib.nvidia_common import (
+    gpu_entities, gpu_discovery, stall_fields, stat_value, publish_gpu_extras, parse_line, read_n, no_data
+)
 
 MACHINE_ID = get_machine_id()
 DEVICE, _ = make_device("windows")
@@ -28,7 +30,6 @@ def hidden_console():
 
 ALL_STATS = [
     ("temperature.gpu", "temperature", "Temperature", "°C", "temperature"),
-    ("temperature.memory", "memory_temperature", "Memory Temperature", "°C", "temperature"),
     ("fan.speed", "fan_speed", "Fan Speed", "%", None),
     ("clocks.gr", "core_clock", "Core Clock", "MHz", "frequency"),
     ("clocks.mem", "memory_clock", "Memory Clock", "MHz", "frequency"),
@@ -37,42 +38,12 @@ ALL_STATS = [
     ("memory.used", "memory_used_percent", "Memory Used", "%", None),
     ("power.limit", "power_limit", "Power Limit", "W", "power"),
     ("pstate", "pstate", "Performance State", None, None),
-    ("clocks_throttle_reasons.active", "throttle_reasons", "Throttle Reasons", None, None),
+    ("clocks_event_reasons.active", "throttle_reasons", "Throttle Reasons", None, None),
 ]
 
 STATS = ALL_STATS if os.environ["NVIDIA_GPU_STATS"] else []
-FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS] + (["memory.total"] if STATS else []) + ["uuid"])
+FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS] + stall_fields(STATS) + (["memory.total"] if STATS else []) + ["uuid"])
 QUERY = ["nvidia-smi", f"--query-gpu={FIELDS}", "--format=csv,noheader,nounits"]
-
-def stat_value(extra, i):
-    if STATS[i][0] == "memory.used":
-        return str(float(extra[i]) / float(extra[-1]) * 100)
-    return extra[i]
-
-def parse_line(line):
-    parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 4:
-        return None
-    try:
-        idx = int(parts[0])
-    except ValueError:
-        return None
-    try:
-        power = float(parts[2])
-    except ValueError:
-        power = 0.0
-    return {"idx": idx, "name": clean_gpu_name(parts[1]), "power": power, "uuid": parts[-1], "extra": parts[3:-1]}
-
-def read_n(proc, n):
-    rows = []
-    while len(rows) < n:
-        line = proc.stdout.readline()
-        if not line:
-            return None
-        row = parse_line(line.strip())
-        if row:
-            rows.append(row)
-    return rows
 
 listed = subprocess.run(
     QUERY, capture_output=True, text=True, stdin=subprocess.DEVNULL,
@@ -82,7 +53,7 @@ listed = subprocess.run(
 rows = [parse_line(line.strip()) for line in (listed.stdout or "").splitlines()]
 rows = [row for row in rows if row]
 if not rows:
-    raise SystemExit("nvidia-smi produced no data (no GPUs or driver problem)")
+    raise SystemExit(no_data(listed.returncode, (listed.stdout or "") + (listed.stderr or "")))
 
 gpus = []
 for g in rows:
@@ -94,9 +65,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(f"{PREFIX}/status")
         for g in gpus:
-            client.publish(g["config_p"], json.dumps(g["disc_p"]))
-            client.publish(g["config_e"], json.dumps(g["disc_e"]))
-            for _, _, config, disc in g["stats"]:
+            for config, disc in gpu_discovery(g):
                 client.publish(config, json.dumps(disc))
         client.publish(AVAIL_T, "online")
 
@@ -131,7 +100,8 @@ def publish(sample):
         client.publish(g["state_e"], f"{g['energy_wh'] / 1000.0:.6f}")
         for i, state, _, _ in g["stats"]:
             if not s["extra"][i].startswith("["):
-                client.publish(state, stat_value(s["extra"], i))
+                client.publish(state, stat_value(STATS, s["extra"], i))
+        publish_gpu_extras(client, g, s["extra"], STATS)
 
 def stop():
     client.publish(AVAIL_T, "offline")
