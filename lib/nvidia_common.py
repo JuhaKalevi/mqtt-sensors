@@ -1,11 +1,11 @@
-"""NVIDIA GPU ids and devices shared by nvidia_gpu_power.py and windows/nvidia_gpu_power.py.
+"""NVIDIA GPU ids and devices shared by nvidia_gpu_power.py, windows/nvidia_gpu_power.py and wildrig_status.py.
 
 Power and energy are slot-keyed on the machine device (<slot>_gpu<N>_power / _energy, generic names), so the history
 of a slot spans GPU swaps for power tracking. The health stats follow the card: keyed by its UUID plus a short model
 name for readability (gpu_<uuid>_<Model>_<metric>, e.g. gpu_8b1c…_RTX4080_temperature), on its own HA device linked
 to the machine.
 """
-import re
+import re, subprocess
 from lib.mqtt_common import (
     id_slug, slot_id, make_linked_device, make_power_discovery, make_energy_discovery, make_sensor_discovery
 )
@@ -27,19 +27,21 @@ def gpu_stat_id(uuid, name, metric):
     """GPU health stat: gpu_<uuid>_<short model>_<metric>."""
     return f"{gpu_device_id(uuid)}_{short_model(name)}_{metric}"
 
-def gpu_lists(gpus, metrics):
-    """Entities of nvidia_gpu_power for [(index, uuid, name)]: slot-keyed power/energy, card-keyed stats."""
-    entities = []
-    for idx, uuid, name in gpus:
-        entities += [f"sensor/{slot_id(f'gpu{idx}_{m}')}" for m in ("power", "energy")]
-        entities += [f"sensor/{gpu_stat_id(uuid, name, m)}" for m in metrics]
-    return tuple(entities)
+def gpu_device(uuid, name, machine_device):
+    """The GPU's linked HA device (keyed by its UUID, via_device = the machine it is in now)."""
+    return make_linked_device(gpu_device_id(uuid), name, machine_device["identifiers"][0], manufacturer="NVIDIA", model=name)
+
+def gpu_inventory():
+    """One nvidia-smi query: [{"idx", "uuid", "name", "bus"}] in nvidia-smi index order; bus is the PCI bus number."""
+    out = subprocess.run(["nvidia-smi", "--query-gpu=index,uuid,name,pci.bus_id", "--format=csv,noheader"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+    rows = [[p.strip() for p in line.split(",")] for line in out.splitlines() if line.count(",") == 3]
+    return [{"idx": int(r[0]), "uuid": r[1], "name": clean_gpu_name(r[2]), "bus": int(r[3].split(":")[1], 16)} for r in rows]
 
 def gpu_entities(prefix, availability_topic, g, stats, machine_device, multi):
     """Topics and discovery of one GPU sample row g (idx, name, uuid, extra): power and energy on the machine device
     (generic slot ids, named by the current card's model: "GeForce RTX 4080 Power", "GeForce RTX 4080 (GPU <N>) Power"
     when the machine has several), stats on the GPU's own linked device (named by the same model)."""
-    device = make_linked_device(gpu_device_id(g["uuid"]), g["name"], machine_device["identifiers"][0], manufacturer="NVIDIA", model=g["name"])
+    device = gpu_device(g["uuid"], g["name"], machine_device)
 
     def topics(metric):
         obj = gpu_stat_id(g["uuid"], g["name"], metric)

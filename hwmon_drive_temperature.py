@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Drive temperature (drivetemp + nvme hwmon, else in-process SAT SMART via SG_IO) → MQTT + Home Assistant discovery."""
-import ctypes, errno, fcntl, functools, json, os, sys, time
+import ctypes, errno, fcntl, json, os, sys, time
 from pathlib import Path
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device, make_linked_device, make_sensor_discovery,
-    create_client, handle_cli, id_part, slot_id, linked_attributes, machine_count
+    create_client, id_part, slot_id, linked_attributes, machine_count
 )
 
 MACHINE_ID = get_machine_id()
@@ -126,7 +126,7 @@ def entry(ids):
 
 def announce(d):
     client.publish(d["config"], json.dumps(d["discovery"]))
-    # retained: the last machine a drive was linked to must survive restarts, so --purge-stale elsewhere never clears it
+    # retained: the last machine a drive was linked to must survive restarts, so a machine it left never removes it once another has it
     client.publish(d["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)
 
 def unlink(d):
@@ -453,40 +453,6 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         for d in list(drives.values()) + [s for s in sat_drives.values() if s["mode"] == "sat"]:
             announce(d)
         client.publish(AVAIL_T, "online")
-
-@functools.cache
-def scan_present():
-    """Drives present now, from sysfs only (no ATA/SCSI command, nothing opened under /dev): ([(entry, label)], [unknown])."""
-    found, unknown = [], []
-    covered = set()
-    for hw in sorted(ROOT.iterdir()):
-        dev = (hw / "device").resolve()
-        ids = identity(dev) if read_opt(hw / "name") in ("drivetemp", "nvme") else None
-        if ids:
-            covered.add(dev)
-            found.append((entry(ids), f"{hw.name} {block_name(dev, dev.name)}"))
-    for b in sorted(BLOCK.glob("sd*")):
-        dev = (b / "device").resolve()
-        if dev in covered:
-            continue
-        ids = identity(dev)
-        if ids:
-            found.append((entry(ids), b.name))
-        if candidate(b) and len(read_bin(dev / "vpd_pg89")) < 572:
-            unknown.append(f"{b.name}: no vpd_pg89, its object id comes from IDENTIFY")
-    return found, unknown
-
-def present_drives():
-    found, unknown = scan_present()
-    return {e["obj"]: label for e, label in found}, unknown
-
-def in_scope(obj, linked=None):
-    """Drive objects this machine may clear: drives last linked to it (never one linked elsewhere or unknown)."""
-    return obj.startswith(DRIVE) and linked == MACHINE_ID
-
-handle_cli(
-    CLIENT_ID, settings, entities=(f"sensor/{COUNT['obj']}",), owned=(AVAIL_OBJ,), match=in_scope, present=present_drives,
-)
 
 hwmons = [hw for hw in ROOT.iterdir() if read_opt(hw / "name") in ("drivetemp", "nvme")]
 disks = [b for b in BLOCK.glob("sd*") if candidate(b)]

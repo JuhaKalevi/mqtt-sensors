@@ -1,6 +1,6 @@
 # Windows
 
-The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is in `lib/` (`mqtt_common`, `nvidia_common`, `board_common`, `xmrig_common`), including the no-retain rule and the availability heartbeat. Object ids, topics, availability and entity ids follow the same [identity rules](../README.md#identity) as Linux (`<slot>_cpu_package_power`, `<slot>_xmrig_*`, `<slot>_gpu<N>_power`, `<slot>_gpu<N>_energy`, GPU stats `gpu_<uuid>_<Model>_<metric>` on the GPU's own device), so a Windows miner feeds the same MQTT names. `<slot>` is `MACHINE_ID` from the repo-root `.env` as written, else the hostname as-is. The HA device is `windows_host_<slot>` named `<slot>` with underscores as spaces (`Olohuone PC1`), hostname as model when it differs; entity ids are the lowercase form. Each script also takes `--help`, `--list`, `--purge-stale` (safe while it runs) and `--purge` (`python windows\<script>.py --list`).
+The Linux collectors at the repo root define what is published; these scripts copy that contract with Windows sources. Shared code is in `lib/` (`mqtt_common`, `nvidia_common`, `board_common`, `xmrig_common`), including the no-retain rule, the `online` repeat after discovery and rediscovery. Object ids, topics, availability and entity ids follow the same [identity rules](../README.md#identity) as Linux (`<slot>_cpu_package_power`, `<slot>_xmrig_*`, `<slot>_gpu<N>_power`, `<slot>_gpu<N>_energy`, GPU stats `gpu_<uuid>_<Model>_<metric>` on the GPU's own device), so a Windows miner feeds the same MQTT names. `<slot>` is `MACHINE_ID` from the repo-root `.env` as written, else the hostname as-is. The HA device is `windows_host_<slot>` named `<slot>` with underscores as spaces (`Olohuone PC1`), hostname as model when it differs; entity ids are the lowercase form. Stale entities are removed by deleting them in Home Assistant; the scripts publish their current ones again right away (see the main README, Removing entities).
 
 Relaxed exception: a program already on the machine may be a source. No vendored driver, no pip. Fail-fast still applies.
 
@@ -20,7 +20,7 @@ Upgrading: `git pull`, add any new `.env` keys from the root example, then quit 
 
 ## GPU
 
-`nvidia_gpu_power.py` runs the same `nvidia-smi --query-gpu=index,name,power.draw --format=csv,noheader,nounits --loop=1` as Linux, without `select()` (no Windows pipe support). A one-shot query counts GPUs. Needs the NVIDIA driver and `nvidia-smi` on `PATH`.
+`nvidia_gpu_power.py` runs the same `nvidia-smi --query-gpu=… --format=csv,noheader,nounits --loop=1` as Linux (same fields), without `select()` (no Windows pipe support). A one-shot query counts GPUs. Needs the NVIDIA driver and `nvidia-smi` on `PATH`.
 
 ## Hardware sensors
 

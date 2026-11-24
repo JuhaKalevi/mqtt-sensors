@@ -2,7 +2,7 @@
 """loginctl active users → MQTT + Home Assistant discovery (session_source())."""
 import json, time
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, handle_cli, slot_id, slot_lists
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id
 )
 from lib.system_common import session_source
 
@@ -11,8 +11,6 @@ DEVICE, DEVICE_ID = make_device()
 CLIENT_ID = f"loginctl-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-
-handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/loginctl_active_users",), availability=("loginctl",)))
 
 OBJ = slot_id("loginctl_active_users")
 AVAIL_T = f"{PREFIX}/sensor/{slot_id('loginctl')}/availability"

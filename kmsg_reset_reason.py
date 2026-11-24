@@ -2,7 +2,7 @@
 """Previous system reset reason (x86/amd, current boot) → MQTT + Home Assistant discovery, once (/dev/kmsg)."""
 import json, os, re
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, handle_cli, slot_id, slot_lists
+    get_machine_id, get_mqtt_settings, make_device, make_sensor_discovery, create_client, slot_id
 )
 
 MACHINE_ID = get_machine_id()
@@ -10,7 +10,6 @@ DEVICE, _ = make_device()
 CLIENT_ID = f"kmsg-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
-handle_cli(CLIENT_ID, settings, **slot_lists(("sensor/kmsg_reset_reason",)))
 
 OBJ = slot_id("kmsg_reset_reason")
 STATE = f"{PREFIX}/sensor/{OBJ}/state"

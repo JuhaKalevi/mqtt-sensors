@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """NVIDIA GPU power + energy → MQTT + Home Assistant discovery (nvidia-smi --loop)."""
-import functools, time, subprocess, json, signal, os, select
+import time, subprocess, json, signal, os, select
 from lib.mqtt_common import (
     get_machine_id, get_mqtt_settings, make_device,
-    create_client, handle_cli, slot_id
+    create_client, slot_id
 )
-from lib.nvidia_common import clean_gpu_name, gpu_entities, gpu_lists
+from lib.nvidia_common import clean_gpu_name, gpu_entities
 
 MACHINE_ID = get_machine_id()
 DEVICE, _ = make_device()
@@ -27,14 +27,6 @@ ALL_STATS = [
     ("clocks_throttle_reasons.active", "throttle_reasons", "Throttle Reasons", None, None),
 ]
 
-@functools.cache
-def lists():
-    """Only for the CLI flags: one nvidia-smi query for each GPU's index, UUID and name."""
-    out = subprocess.run(["nvidia-smi", "--query-gpu=index,uuid,name", "--format=csv,noheader"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
-    gpus = [tuple(p.strip() for p in line.split(",")) for line in out.splitlines() if line.count(",") == 2]
-    return gpu_lists(gpus, [s[1] for s in ALL_STATS])
-
-handle_cli(CLIENT_ID, settings, entities=lists, owned=(slot_id("gpu_power"),))
 STATS = ALL_STATS if os.environ["NVIDIA_GPU_STATS"] else []
 FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS] + (["memory.total"] if STATS else []) + ["uuid"])
 
