@@ -3,12 +3,12 @@
 import json, time
 from pathlib import Path
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_linked_device, make_sensor_discovery, create_client, machine_count,
+    get_machine_id, get_mqtt_settings, make_device, make_child_device, make_sensor_discovery, create_client, machine_count,
     slot_id
 )
 
 MACHINE_ID = get_machine_id()
-HOST_DEVICE, HOST_DEVICE_ID = make_device()
+HOST_DEVICE, _ = make_device()
 CLIENT_ID = f"power-supply-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
@@ -73,7 +73,7 @@ def discovery_for(d, key, peripheral, dirs):
     state = f"{PREFIX}/sensor/{obj}/state"
     config = f"{PREFIX}/sensor/{obj}/config"
     if peripheral:
-        device = make_linked_device(obj, label, HOST_DEVICE_ID, manufacturer=manufacturer, model=model)
+        device = make_child_device(HOST_DEVICE, obj, label)
         name = "Battery"
     else:
         device = HOST_DEVICE
@@ -91,7 +91,9 @@ def drop_battery(key):
         b["fd"].close()
     except OSError:
         pass
-    client.publish(b["config"], "", retain=True)  # retained: clear stored message
+    # retained: clear stored message. A machine that has this peripheral now gets the cleared config too, and
+    # republishes it (rediscovery) as its own child: HA cannot move a child device to another parent otherwise.
+    client.publish(b["config"], "", retain=True)
 
 def choose(dirs):
     return sorted(dirs, key=lambda d: (read_opt(d / "scope") == "System", d.name))[0]

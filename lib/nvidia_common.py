@@ -2,12 +2,13 @@
 
 Power and energy are slot-keyed on the machine device (<slot>_gpu<N>_power / _energy, generic names), so the history
 of a slot spans GPU swaps for power tracking. The health stats follow the card: keyed by its UUID plus a short model
-name for readability (gpu_<uuid>_<Model>_<metric>, e.g. gpu_8b1c…_RTX4080_temperature), on its own HA device linked
-to the machine.
+name for readability (gpu_<uuid>_<Model>_<metric>, e.g. gpu_8b1c…_RTX4080_temperature), on its own HA child device
+of the machine. The child name may start with a board-partner prefix from nvidia-smi pci.sub_device_id; unique ids
+still use short_model() of the nvidia-smi name.
 """
 import json, re, subprocess
 from lib.mqtt_common import (
-    id_slug, slot_id, make_linked_device, make_power_discovery, make_energy_discovery, make_sensor_discovery
+    id_slug, slot_id, make_child_device, make_power_discovery, make_energy_discovery, make_sensor_discovery
 )
 
 VRAM_NEAR_FULL = 90.0
@@ -20,6 +21,38 @@ SLOWDOWN_FIELDS = (
     "clocks_event_reasons.sw_thermal_slowdown",
 )
 STALL_FIELDS = ["pcie.link.gen.gpucurrent", "pcie.link.width.current", *SLOWDOWN_FIELDS]
+
+# pci.sub_device_id is listed by `nvidia-smi --help-query-gpu` ("PCI Sub System id, in hex").
+# Low 16 bits are the subsystem vendor. NVIDIA (10DE) is omitted (Founders / reference). Unknown vendors: no prefix.
+BOARD_PARTNERS = {
+    0x1462: "MSI",
+    0x1043: "ASUS",
+    0x1458: "Gigabyte",
+    0x19DA: "ZOTAC",
+    0x3842: "EVGA",
+    0x1569: "Palit",
+    0x10B0: "Gainward",
+    0x196E: "PNY",
+}
+
+def partner_prefix(sub_device_id):
+    """Board-partner name from pci.sub_device_id, or "" for NVIDIA, unknown, or unreadable."""
+    raw = str(sub_device_id or "").strip()
+    if not raw or raw.startswith("["):
+        return ""
+    try:
+        value = int(raw, 16)
+    except ValueError:
+        return ""
+    vendor = value & 0xFFFF
+    if vendor == 0x10DE:
+        return ""
+    return BOARD_PARTNERS.get(vendor, "")
+
+def gpu_child_name(name, sub_device_id=""):
+    """Child device name: optional partner prefix plus the cleaned nvidia-smi name."""
+    prefix = partner_prefix(sub_device_id)
+    return f"{prefix} {name}" if prefix else name
 
 def clean_gpu_name(name):
     name = re.sub(r"^NVIDIA\s+", "", name, flags=re.I)
@@ -38,30 +71,31 @@ def gpu_stat_id(uuid, name, metric):
     """GPU health stat: gpu_<uuid>_<short model>_<metric>."""
     return f"{gpu_device_id(uuid)}_{short_model(name)}_{metric}"
 
-def gpu_device(uuid, name, machine_device):
-    """The GPU's linked HA device (keyed by its UUID, via_device = the machine it is in now)."""
-    return make_linked_device(gpu_device_id(uuid), name, machine_device["identifiers"][0], manufacturer="NVIDIA", model=name)
+def gpu_device(uuid, name, machine_device, sub_device_id=""):
+    """The GPU's HA device: a child device of the machine (HA 2026.11+), keyed by its UUID, named by its model
+    with a board-partner prefix when pci.sub_device_id is a known vendor."""
+    return make_child_device(machine_device, gpu_device_id(uuid), gpu_child_name(name, sub_device_id))
 
 def gpu_inventory():
-    """One nvidia-smi query: [{"idx", "uuid", "name", "bus"}] in nvidia-smi index order; bus is the PCI bus number."""
-    out = subprocess.run(["nvidia-smi", "--query-gpu=index,uuid,name,pci.bus_id", "--format=csv,noheader"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
-    rows = [[p.strip() for p in line.split(",")] for line in out.splitlines() if line.count(",") == 3]
-    return [{"idx": int(r[0]), "uuid": r[1], "name": clean_gpu_name(r[2]), "bus": int(r[3].split(":")[1], 16)} for r in rows]
+    """One nvidia-smi query: [{"idx", "uuid", "name", "bus", "sub_device_id"}] in nvidia-smi index order; bus is the PCI bus number."""
+    out = subprocess.run(["nvidia-smi", "--query-gpu=index,uuid,name,pci.bus_id,pci.sub_device_id", "--format=csv,noheader"], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+    rows = [[p.strip() for p in line.split(",")] for line in out.splitlines() if line.count(",") == 4]
+    return [{"idx": int(r[0]), "uuid": r[1], "name": clean_gpu_name(r[2]), "bus": int(r[3].split(":")[1], 16), "sub_device_id": r[4]} for r in rows]
 
 def parse_line(line):
-    """One CSV row of the nvidia_gpu_power query (index, name, power.draw, …, uuid), or None for anything else."""
+    """One CSV row of the nvidia_gpu_power query (index, name, pci.sub_device_id, power.draw, …, uuid), or None for anything else."""
     parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 4:
+    if len(parts) < 5:
         return None
     try:
         idx = int(parts[0])
     except ValueError:
         return None
     try:
-        power = float(parts[2])
+        power = float(parts[3])
     except ValueError:
         power = 0.0
-    return {"idx": idx, "name": clean_gpu_name(parts[1]), "power": power, "uuid": parts[-1], "extra": parts[3:-1]}
+    return {"idx": idx, "name": clean_gpu_name(parts[1]), "sub_device_id": parts[2], "power": power, "uuid": parts[-1], "extra": parts[4:-1]}
 
 def read_n(proc, n):
     """The next n rows (one sample of n GPUs) from a `--loop` stream; None at EOF."""
@@ -122,8 +156,8 @@ def _stall_entity(prefix, availability_topic, g, device, metric, title, unit, de
 def gpu_entities(prefix, availability_topic, g, stats, machine_device, multi):
     """Topics and discovery of one GPU sample row g (idx, name, uuid, extra): power and energy on the machine device
     (generic slot ids, named by the current card's model: "GeForce RTX 4080 Power", "GeForce RTX 4080 (GPU <N>) Power"
-    when the machine has several), stats on the GPU's own linked device (named by the same model)."""
-    device = gpu_device(g["uuid"], g["name"], machine_device)
+    when the machine has several), stats on the GPU's child device (named by the model, with a board-partner prefix)."""
+    device = gpu_device(g["uuid"], g["name"], machine_device, g.get("sub_device_id"))
 
     def topics(metric):
         obj = gpu_stat_id(g["uuid"], g["name"], metric)

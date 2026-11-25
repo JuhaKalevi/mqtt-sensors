@@ -7,7 +7,7 @@ from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make
 
 HOSTNAME = get_hostname()
 DEVICE_ID = "xmr_network"
-DEVICE = {"identifiers": [DEVICE_ID], "name": "Monero"}
+DEVICE = {"identifiers": [DEVICE_ID], "name": "Monero", "manufacturer": "xmrchain.net", "model": "Network"}
 CLIENT_ID = f"xmr-network-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]

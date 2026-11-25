@@ -29,7 +29,7 @@ ALL_STATS = [
 ]
 
 STATS = ALL_STATS if os.environ["NVIDIA_GPU_STATS"] else []
-FIELDS = ",".join(["index", "name", "power.draw"] + [s[0] for s in STATS] + stall_fields(STATS) + (["memory.total"] if STATS else []) + ["uuid"])
+FIELDS = ",".join(["index", "name", "pci.sub_device_id", "power.draw"] + [s[0] for s in STATS] + stall_fields(STATS) + (["memory.total"] if STATS else []) + ["uuid"])
 
 QUERY = ["nvidia-smi", f"--query-gpu={FIELDS}", "--format=csv,noheader,nounits"]
 

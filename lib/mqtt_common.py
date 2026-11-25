@@ -62,34 +62,34 @@ def get_mqtt_settings():
     }
 
 def make_device(kind="linux"):
-    """The machine's HA device <kind>_host_<machine_id> (case kept), named machine_name(), with the hostname as model when it differs."""
+    """The machine's HA device <kind>_host_<machine_id> (case kept), named machine_name(), with manufacturer
+    and model from DMI (Linux) or WMI (Windows). The hostname is the model only when those are empty and it
+    differs from the slot."""
+    from lib.board_common import machine_hardware_info
     machine_id = get_machine_id()
     device_id = f"{kind}_host_{machine_id}"
     device = {"identifiers": [device_id], "name": machine_name()}
-    if machine_id != get_hostname():
-        device["model"] = get_hostname()
+    manufacturer, model = machine_hardware_info(kind)
+    if not model and get_hostname() != machine_id:
+        model = get_hostname()
+    if manufacturer:
+        device["manufacturer"] = manufacturer
+    if model:
+        device["model"] = model
     return device, device_id
 
-def make_linked_device(identifier, name, via_device_id, **info):
-    """HA device for hardware that can move between machines (peripheral battery, GPU, drive): keyed by the
-    hardware (identifier, no slot or hostname), linked to the machine it is in now via via_device. info: optional
-    manufacturer / model / serial_number, empty ones dropped."""
-    device = {"identifiers": [identifier], "name": name, "via_device": via_device_id}
-    device.update({k: v for k, v in info.items() if v})
-    return device
+def make_child_device(parent_device, identifier, name):
+    """HA child device (HA 2026.11+, MQTT `child_device`): a part of the parent device, with its own name and entities and
+    the parent's area. Only identifiers and name; it cannot move to another parent."""
+    return {**parent_device, "child_device": {"identifiers": [identifier], "name": name}}
 
 def machine_count(prefix, availability_topic, name, metric, device):
     """Diagnostic count sensor <slot>_<metric> on the machine device, for collectors whose other entities sit on
-    linked devices. It defines the via_device itself: HA stub-creates a via_device it does not know yet, without a
-    name, so it shows the MQTT entry title (the broker address) until something names it."""
+    child devices."""
     obj = slot_id(metric)
     state = f"{prefix}/sensor/{obj}/state"
     disc = make_sensor_discovery(name, state, availability_topic, obj, device, state_class="measurement", entity_category="diagnostic")
     return {"obj": obj, "state": state, "config": f"{prefix}/sensor/{obj}/config", "discovery": disc}
-
-def linked_attributes(machine_id):
-    """Retained attributes of a linked device's entity: the machine it was last linked to (see AGENT.md, linked devices)."""
-    return {"linked_machine": machine_id, "linked_hostname": get_hostname()}
 
 def _availability(availability_topic):
     if not availability_topic:

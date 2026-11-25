@@ -4,7 +4,7 @@ import json, os, time, http.client
 from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make_sensor_discovery
 
 HOSTNAME = get_hostname()
-DEVICE = {"identifiers": ["grok"], "name": "Grok"}
+DEVICE = {"identifiers": ["grok"], "name": "Grok", "manufacturer": "xAI", "model": "Usage"}
 CLIENT_ID = f"grok-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
