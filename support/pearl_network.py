@@ -7,7 +7,7 @@ from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make
 
 HOSTNAME = get_hostname()
 DEVICE_ID = "pearl_network"
-DEVICE = {"identifiers": [DEVICE_ID], "name": "Pearl"}
+DEVICE = {"identifiers": [DEVICE_ID], "name": "Pearl", "manufacturer": "pearlchain.live", "model": "Network"}
 CLIENT_ID = f"pearl-network-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]

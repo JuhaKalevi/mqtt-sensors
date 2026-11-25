@@ -7,7 +7,7 @@ from lib.mqtt_common import get_hostname, get_mqtt_settings, create_client, make
 
 HOSTNAME = get_hostname()
 DEVICE_ID = "usdt_eur_price"
-DEVICE = {"identifiers": [DEVICE_ID], "name": "USDT/EUR"}
+DEVICE = {"identifiers": [DEVICE_ID], "name": "USDT/EUR", "manufacturer": "Kraken", "model": "Price"}
 CLIENT_ID = f"usdt-eur-{HOSTNAME}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]

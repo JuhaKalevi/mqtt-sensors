@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Drive temperature (drivetemp + nvme hwmon, else in-process SAT SMART via SG_IO) → MQTT + Home Assistant discovery."""
-import ctypes, errno, fcntl, json, os, sys, time
+import ctypes, errno, fcntl, json, os, re, sys, time
 from pathlib import Path
 from lib.mqtt_common import (
-    get_machine_id, get_mqtt_settings, make_device, make_linked_device, make_sensor_discovery,
-    create_client, id_part, slot_id, linked_attributes, machine_count
+    get_machine_id, get_mqtt_settings, make_device, make_child_device, make_sensor_discovery,
+    create_client, id_part, slot_id, machine_count
 )
 
 MACHINE_ID = get_machine_id()
-DEVICE, DEVICE_ID = make_device()
+DEVICE, _ = make_device()
 CLIENT_ID = f"hwmon-drive-temperature-{MACHINE_ID}"
 settings = get_mqtt_settings()
 PREFIX = settings["prefix"]
@@ -27,8 +27,6 @@ drives = {}
 sat_drives = {}
 skipped = {}
 quirk_suggestions = set()
-links = {}  # drive object -> linked_machine in its attributes, as last seen on the broker
-warned = set()
 collecting_quirks = True
 
 class SgIoHdr(ctypes.Structure):
@@ -87,6 +85,55 @@ def usb_parent(dev):
             return p
     return None
 
+def scsi_vendor(dev):
+    """SCSI vendor string from sysfs, or empty. NVMe often has only a PCI hex id, which is ignored later."""
+    for p in (dev, dev / "device"):
+        value = read_opt(p / "vendor")
+        if value:
+            return value
+    return ""
+
+def drive_vendor_from_model(model):
+    """Seagate ST* and Western Digital WDC/WD* model prefixes only; nothing guessed from product families."""
+    if re.match(r"ST[A-Z]?\d", model, re.I):
+        return "Seagate"
+    if re.match(r"(WDC|WD_|WD\d|WD BLACK|WD_BLACK)", model, re.I):
+        return "Western Digital"
+    return ""
+
+def drive_vendor_name(vendor):
+    """A display vendor, or empty if the sysfs value is a placeholder, ATA/NVMe/USB, or a PCI id."""
+    text = (vendor or "").strip()
+    if not text or text.lower().startswith("0x"):
+        return ""
+    key = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    aliases = {
+        "samsung": "Samsung",
+        "seagate": "Seagate",
+        "wdc": "Western Digital",
+        "wd": "Western Digital",
+        "western digital": "Western Digital",
+    }
+    if key in aliases:
+        return aliases[key]
+    if key in {"ata", "nvme", "scsi", "usb", "generic", "atapi", "unknown", "none"}:
+        return ""
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,28})?", text):
+        return text
+    return ""
+
+def drive_display_name(model, vendor=""):
+    """Child device name: prepend the vendor when the model string does not already carry it."""
+    model = (model or "Drive").strip() or "Drive"
+    vendor = drive_vendor_name(vendor) or drive_vendor_from_model(model)
+    if not vendor:
+        return model
+    if vendor == "Western Digital" and re.search(r"(?i)(^|[^A-Za-z0-9])(WDC|WD|Western Digital)([^A-Za-z0-9]|$)", model):
+        return model
+    if re.search(rf"(?i)(^|[^A-Za-z0-9]){re.escape(vendor)}([^A-Za-z0-9]|$)", model):
+        return model
+    return f"{vendor} {model}"
+
 def identity(dev, model="", serial=""):
     usb = usb_parent(dev)
     pg89 = read_bin(dev / "vpd_pg89")
@@ -102,58 +149,34 @@ def identity(dev, model="", serial=""):
             ident = f"usb {read_opt(usb / 'idVendor')} {read_opt(usb / 'idProduct')} {usb_serial} {lun}"
     if not ident:
         return None
-    return model or "Drive", serial, ident, usb is not None
+    return model or "Drive", serial, ident, usb is not None, scsi_vendor(dev)
 
 def entry(ids):
-    """A drive is a linked device keyed by its ident (case kept, no hostname), linked to this machine."""
-    model, serial, ident, usb = ids
+    """A drive is a child device of this machine, keyed by its ident (case kept, no hostname); diagnostic temperature."""
+    model, serial, ident, usb, vendor = ids
+    name = drive_display_name(model, vendor)
     obj = f"{DRIVE}{id_part(ident)}"
     state = f"{PREFIX}/sensor/{obj}/state"
-    attrs = f"{PREFIX}/sensor/{obj}/attributes"
-    device = make_linked_device(f"drive_{id_part(ident)}", model, DEVICE_ID, model=model, serial_number=serial)
+    device = make_child_device(DEVICE, f"drive_{id_part(ident)}", name)
     discovery = make_sensor_discovery(
         "Temperature (USB)" if usb else "Temperature", state, AVAIL_T, obj, device,
-        unit="°C", device_class="temperature", state_class="measurement", json_attributes_topic=attrs
+        unit="°C", device_class="temperature", state_class="measurement", entity_category="diagnostic"
     )
     return {
         "obj": obj,
-        "label": f"{model} {serial}".strip(),
+        "label": f"{name} {serial}".strip(),
         "state": state,
-        "attrs": attrs,
         "config": f"{PREFIX}/sensor/{obj}/config",
         "discovery": discovery,
     }
 
 def announce(d):
     client.publish(d["config"], json.dumps(d["discovery"]))
-    # retained: the last machine a drive was linked to must survive restarts, so a machine it left never removes it once another has it
-    client.publish(d["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)
 
 def unlink(d):
-    """Remove a drive that left this machine from HA, unless it is already linked to another machine."""
-    other = links.get(d["obj"])
-    if other not in (None, MACHINE_ID):
-        log(f"{d['label']}: now linked to {other}, its entity is left alone")
-        return
+    """Remove a drive that left this machine from HA. A machine that has it now gets the cleared config too, and
+    republishes it (rediscovery) as its own child: HA cannot move a child device to another parent otherwise."""
     client.publish(d["config"], "", retain=True)  # retained: clear stored message
-
-def on_attributes(client, userdata, msg):
-    obj = msg.topic.split("/")[-2]
-    if not obj.startswith(DRIVE) or not msg.payload:
-        return
-    try:
-        machine = json.loads(msg.payload).get("linked_machine")
-    except (ValueError, AttributeError):
-        return
-    links[obj] = machine
-    mine = {d["obj"] for d in drives.values()} | {s["obj"] for s in sat_drives.values() if "obj" in s}
-    if machine == MACHINE_ID or obj not in mine or (obj, machine) in warned:
-        return
-    warned.add((obj, machine))
-    if msg.retain:
-        log(f"{obj}: was last linked to {machine}, now linked here")
-    else:
-        log(f"{obj}: CONFLICT: machine {machine} publishes this drive too; one drive cannot be in two machines (duplicate serial, or a stale collector there)")
 
 def block_name(dev, fallback):
     try:
@@ -396,7 +419,6 @@ def poll_sat(s):
     _, t = read_smart(s, s["op"])
     if t is not None:
         client.publish(s["state"], "%.1f" % t, retain=True)  # retained: slow interval
-        client.publish(s["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)  # retained: last link (announce)
 
 def candidate(b):
     return read_opt(b / "removable") != "1" and read_opt(b / "size") not in ("", "0")
@@ -448,7 +470,6 @@ def sync_sat():
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(f"{PREFIX}/status")
-        client.subscribe(f"{PREFIX}/sensor/+/attributes")
         client.publish(COUNT["config"], json.dumps(COUNT["discovery"]))
         for d in list(drives.values()) + [s for s in sat_drives.values() if s["mode"] == "sat"]:
             announce(d)
@@ -461,7 +482,6 @@ if not hwmons and not disks:
     sys.exit("hwmon_drive_temperature: no drivetemp or nvme hwmon and no SCSI disks; for SATA try: modprobe drivetemp")
 
 client = create_client(CLIENT_ID, settings, will_topic=AVAIL_T)
-client.message_callback_add(f"{PREFIX}/sensor/+/attributes", on_attributes)
 client.on_connect = on_connect
 client.connect(settings["host"], settings["port"], keepalive=60)
 client.loop_start()
@@ -476,7 +496,6 @@ try:
             except (OSError, ValueError):
                 continue
             client.publish(d["state"], "%.1f" % (val / 1000.0), retain=True)  # retained: slow interval
-            client.publish(d["attrs"], json.dumps(linked_attributes(MACHINE_ID)), retain=True)  # retained: last link (announce)
         sync_sat()
         client.publish(COUNT["state"], str(len(drives) + sum(s["mode"] == "sat" for s in sat_drives.values())), retain=True)  # retained: slow interval
         if collecting_quirks:

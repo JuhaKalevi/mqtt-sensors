@@ -43,7 +43,7 @@ TOPIC_USDT_EUR = f"{PREFIX}/sensor/usdt_eur_price/state"
 TOPIC_USDT_EUR_ATTRS = f"{PREFIX}/sensor/usdt_eur_price/attributes"
 
 def gpu_card(g):
-    device = gpu_device(g["uuid"], g["name"], DEVICE)
+    device = gpu_device(g["uuid"], g["name"], DEVICE, g.get("sub_device_id"))
     t = {}
     for component, metric in GPU_METRICS:
         obj = gpu_stat_id(g["uuid"], g["name"], metric)
